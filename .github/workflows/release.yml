@@ -41,6 +41,8 @@ jobs:
       release_prerelease: ${{ steps.prepare.outputs.release_prerelease }}
       make_latest: ${{ steps.prepare.outputs.make_latest }}
       generate_release_notes: ${{ steps.prepare.outputs.generate_release_notes }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      required_assets: ${{ steps.prepare.outputs.required_assets }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -80,6 +82,7 @@ jobs:
           release_prerelease="true"
           make_latest="false"
           generate_release_notes="false"
+          full_release="false"
 
           if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" == v* && "$requested_ref" == "$GITHUB_SHA" ]]; then
             release_tag="$GITHUB_REF_NAME"
@@ -88,6 +91,7 @@ jobs:
             release_prerelease="false"
             make_latest="true"
             generate_release_notes="true"
+            full_release="true"
           elif git branch -r --contains "$beads_web_sha" | grep -Eq '^[[:space:]]*origin/main$'; then
             release_draft="false"
             release_prerelease="false"
@@ -103,13 +107,30 @@ jobs:
           echo "release_prerelease=$release_prerelease" >> "$GITHUB_OUTPUT"
           echo "make_latest=$make_latest" >> "$GITHUB_OUTPUT"
           echo "generate_release_notes=$generate_release_notes" >> "$GITHUB_OUTPUT"
+          if [[ "$full_release" == "true" ]]; then
+            asset_description="Assets include standalone beads-web binaries for macOS, Linux, and Windows. The Linux x64 binary is built on Ubuntu 22.04 for compatibility with Debian bookworm and newer glibc runtimes."
+            echo 'matrix={"include":[{"os":"macos-latest","target":"aarch64-apple-darwin","artifact":"beads-web-darwin-arm64"},{"os":"macos-latest","target":"x86_64-apple-darwin","artifact":"beads-web-darwin-x64"},{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","artifact":"beads-web-linux-x64"},{"os":"windows-latest","target":"x86_64-pc-windows-msvc","artifact":"beads-web-win-x64.exe"}]}' >> "$GITHUB_OUTPUT"
+            echo 'required_assets<<EOF' >> "$GITHUB_OUTPUT"
+            printf '%s\n' \
+              'beads-web-darwin-arm64' \
+              'beads-web-darwin-x64' \
+              'beads-web-linux-x64' \
+              'beads-web-win-x64.exe' >> "$GITHUB_OUTPUT"
+            echo 'EOF' >> "$GITHUB_OUTPUT"
+          else
+            asset_description="Per-commit release assets include only the standalone Linux x64 beads-web binary, built on Ubuntu 22.04 for compatibility with Debian bookworm and newer glibc runtimes. Tagged releases include all supported platforms."
+            echo 'matrix={"include":[{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","artifact":"beads-web-linux-x64"}]}' >> "$GITHUB_OUTPUT"
+            echo 'required_assets<<EOF' >> "$GITHUB_OUTPUT"
+            echo 'beads-web-linux-x64' >> "$GITHUB_OUTPUT"
+            echo 'EOF' >> "$GITHUB_OUTPUT"
+          fi
           echo 'release_body<<EOF' >> "$GITHUB_OUTPUT"
           cat <<EOF >> "$GITHUB_OUTPUT"
           Release assets for beads-web commit ${beads_web_sha}.
 
           Deterministic lookup tag: \`${release_tag}\`
 
-          Assets include standalone beads-web binaries for macOS, Linux, and Windows. The Linux x64 binary is built on Ubuntu 22.04 for compatibility with Debian bookworm and newer glibc runtimes.
+          ${asset_description}
           EOF
           echo 'EOF' >> "$GITHUB_OUTPUT"
 
@@ -119,6 +140,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
           FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
+          REQUIRED_ASSETS: ${{ steps.prepare.outputs.required_assets }}
         run: |
           set -euo pipefail
 
@@ -134,20 +156,16 @@ jobs:
             exit 0
           fi
 
-          required_assets=(
-            "beads-web-darwin-arm64"
-            "beads-web-darwin-x64"
-            "beads-web-linux-x64"
-            "beads-web-win-x64.exe"
-          )
-
           missing=0
-          for asset in "${required_assets[@]}"; do
+          while IFS= read -r asset; do
+            if [[ -z "$asset" ]]; then
+              continue
+            fi
             if ! grep -Fxq "$asset" existing-assets.txt; then
               echo "missing expected asset: $asset"
               missing=1
             fi
-          done
+          done <<< "$REQUIRED_ASSETS"
 
           if [[ "$missing" -eq 0 ]]; then
             echo "assets_exist=true" >> "$GITHUB_OUTPUT"
@@ -160,20 +178,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_run == 'true' && needs.prepare.outputs.assets_exist != 'true'
     strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: beads-web-darwin-arm64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: beads-web-darwin-x64
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            artifact: beads-web-linux-x64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: beads-web-win-x64.exe
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
 
     runs-on: ${{ matrix.os }}
 
