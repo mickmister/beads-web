@@ -232,6 +232,33 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout release target
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.target_commitish }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Ensure release tag exists
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TARGET_COMMITISH: ${{ needs.prepare.outputs.target_commitish }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" || true
+
+          if git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "Release tag ${RELEASE_TAG} already exists."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${RELEASE_TAG}" "${TARGET_COMMITISH}"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v7
         with:
@@ -253,6 +280,7 @@ jobs:
           draft: ${{ needs.prepare.outputs.release_draft == 'true' }}
           prerelease: ${{ needs.prepare.outputs.release_prerelease == 'true' }}
           make_latest: ${{ needs.prepare.outputs.make_latest }}
+          token: ${{ github.token }}
           files: release/*
           generate_release_notes: ${{ needs.prepare.outputs.generate_release_notes == 'true' }}
           overwrite_files: true
