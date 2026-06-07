@@ -38,6 +38,10 @@ interface QuickFilterBarProps {
   todayOnly: boolean;
   /** Callback when today's active toggle changes */
   onTodayOnlyChange: (value: boolean) => void;
+  /** Whether to show only beads assigned to the user */
+  myBoardOnly: boolean;
+  /** Callback when My board toggle changes */
+  onMyBoardOnlyChange: (value: boolean) => void;
   /** Field to sort by */
   sortField: SortField;
   /** Sort direction */
@@ -111,6 +115,8 @@ export function QuickFilterBar({
   onTypeFilterChange,
   todayOnly,
   onTodayOnlyChange,
+  myBoardOnly,
+  onMyBoardOnlyChange,
   sortField,
   sortDirection,
   onSortChange,
@@ -216,6 +222,21 @@ export function QuickFilterBar({
         )}
       >
         Today
+      </button>
+
+      {/* My Board Toggle */}
+      <button
+        type="button"
+        onClick={() => onMyBoardOnlyChange(!myBoardOnly)}
+        aria-pressed={myBoardOnly}
+        className={cn(
+          'h-8 px-3 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised',
+          myBoardOnly
+            ? 'bg-info/20 text-info'
+            : 'bg-surface-overlay/50 text-t-tertiary hover:text-t-secondary'
+        )}
+      >
+        My board
       </button>
 
       {/* Memory Toggle */}

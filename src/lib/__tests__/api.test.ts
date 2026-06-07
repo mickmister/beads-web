@@ -14,7 +14,8 @@ function mockResponse(data: unknown, status = 200) {
     status,
     statusText: status === 200 ? 'OK' : 'Error',
     json: () => Promise.resolve(data),
-  } as Response;
+    headers: { get: () => null },
+  } as unknown as Response;
 }
 
 beforeEach(() => {
@@ -79,6 +80,27 @@ describe('api.beads', () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [url, options] = mockFetch.mock.calls[0];
       expect(url).toContain('/api/beads/update');
+      expect(options.method).toBe('PATCH');
+      expect(JSON.parse(options.body)).toEqual(updateData);
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('updateMetadata', () => {
+    it('calls PATCH /api/beads/metadata with correct body', async () => {
+      const updateData = {
+        path: '/my/project',
+        id: 'bead-123',
+        metadata: { beadsWeb: { forms: [] } },
+      };
+
+      mockFetch.mockResolvedValue(mockResponse({ success: true }));
+
+      const result = await api.beads.updateMetadata(updateData);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url, options] = mockFetch.mock.calls[0];
+      expect(url).toContain('/api/beads/metadata');
       expect(options.method).toBe('PATCH');
       expect(JSON.parse(options.body)).toEqual(updateData);
       expect(result).toEqual({ success: true });

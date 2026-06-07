@@ -21,6 +21,8 @@ export const BeadSchema = z.object({
   priority: z.number().nullish(),
   issue_type: z.string().nullish(),
   owner: z.string().nullish(),
+  assignee: z.string().nullish(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
   created_at: z.string().nullish(),
   updated_at: z.string().nullish(),
   comments: z.array(CommentSchema).nullish(),

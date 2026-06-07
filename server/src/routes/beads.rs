@@ -139,6 +139,10 @@ pub struct Bead {
     #[serde(default)]
     pub owner: Option<String>,
     #[serde(default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
     pub created_by: Option<String>,
@@ -843,6 +847,106 @@ pub async fn update_bead_handler(
     }
 }
 
+
+/// Request body for replacing a bead metadata object.
+#[derive(Debug, Deserialize)]
+pub struct UpdateBeadMetadataRequest {
+    /// Project path or `dolt://dbname`
+    pub path: String,
+    /// Bead ID to update
+    pub id: String,
+    /// Replacement metadata object
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+/// PATCH /api/beads/metadata
+///
+/// Replaces a bead's custom metadata object. For filesystem projects this uses
+/// `bd update --metadata` so bd remains the source of truth and can maintain
+/// its own storage invariants/history. For direct `dolt://` projects, updates
+/// the Dolt metadata column directly.
+pub async fn update_bead_metadata_handler(
+    Extension(dolt_manager): Extension<Arc<DoltManager>>,
+    Json(req): Json<UpdateBeadMetadataRequest>,
+) -> impl IntoResponse {
+    if req.id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Bead ID is required" })),
+        );
+    }
+
+    let metadata_value = serde_json::Value::Object(req.metadata);
+    let metadata_json = match serde_json::to_string(&metadata_value) {
+        Ok(json) => json,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": format!("Invalid metadata: {}", e) })),
+            );
+        }
+    };
+
+    if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
+        if !dolt_manager.is_available() && !dolt_manager.check_server().await {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "Dolt server is not running" })),
+            );
+        }
+
+        return match dolt_manager.update_bead_metadata(db_name, &req.id, &metadata_json).await {
+            Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "success": true }))),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            ),
+        };
+    }
+
+    let project_path = std::path::PathBuf::from(&req.path);
+    if let Err(e) = validate_path_security(&project_path) {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": e })));
+    }
+
+    let bd_path = match super::find_bd() {
+        Some(path) => path.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "bd CLI not found" })),
+            );
+        }
+    };
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(30),
+        Command::new(bd_path)
+            .args(["update", req.id.as_str(), "--metadata", metadata_json.as_str()])
+            .current_dir(&project_path)
+            .output(),
+    ).await;
+
+    match result {
+        Ok(Ok(output)) => {
+            if output.status.success() {
+                (StatusCode::OK, Json(serde_json::json!({ "success": true })))
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": stderr.trim() })))
+            }
+        }
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Failed to execute bd: {}", e) })),
+        ),
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(serde_json::json!({ "error": "bd command timed out" })),
+        ),
+    }
+}
+
 /// Post-processes beads: resolves dependencies, infers parent-child from ID patterns, sets children.
 fn post_process_beads(mut beads: Vec<Bead>) -> Vec<Bead> {
     let mut parent_to_children: std::collections::HashMap<String, Vec<String>> =
@@ -1381,6 +1485,8 @@ mod tests {
             priority: None,
             issue_type: None,
             owner: None,
+            assignee: None,
+            metadata: None,
             created_at: None,
             created_by: None,
             updated_at: None,

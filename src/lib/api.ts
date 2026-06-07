@@ -173,6 +173,12 @@ export const beads = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+
+  updateMetadata: (data: { path: string; id: string; metadata: Record<string, unknown> }) =>
+    fetchApi<{ success: boolean }>('/api/beads/metadata', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
 };
 
 /**

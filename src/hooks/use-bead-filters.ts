@@ -39,6 +39,8 @@ export interface BeadFilters {
   sortDirection: SortDirection;
   /** Filter to items updated (worked on) today */
   todayOnly: boolean;
+  /** Filter to beads explicitly assigned to the user */
+  myBoardOnly: boolean;
 }
 
 /**
@@ -74,6 +76,7 @@ const DEFAULT_FILTERS: BeadFilters = {
   sortField: "created_at",
   sortDirection: "desc",
   todayOnly: false,
+  myBoardOnly: false,
 };
 
 /**
@@ -204,6 +207,11 @@ export function useBeadFilters(
         if (!filters.owners.includes(bead.owner)) return false;
       }
 
+      // My board filter - user-assigned beads only.
+      if (filters.myBoardOnly) {
+        if (bead.assignee !== "user") return false;
+      }
+
       // Today filter - items updated (worked on) today, regardless of status.
       // Uses client-computed todayStr to avoid SSR/client hydration mismatch.
       // Before mount (todayStr is null), skip filtering to match SSR output.
@@ -241,6 +249,7 @@ export function useBeadFilters(
       filters.priorities.length > 0 ||
       filters.owners.length > 0 ||
       filters.todayOnly ||
+      filters.myBoardOnly ||
       filters.sortField !== DEFAULT_FILTERS.sortField ||
       filters.sortDirection !== DEFAULT_FILTERS.sortDirection
     );
@@ -255,6 +264,7 @@ export function useBeadFilters(
     if (filters.priorities.length > 0) count++;
     if (filters.owners.length > 0) count++;
     if (filters.todayOnly) count++;
+    if (filters.myBoardOnly) count++;
     return count;
   }, [filters]);
 

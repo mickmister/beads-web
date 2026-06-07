@@ -254,6 +254,43 @@ impl DoltManager {
         Ok(())
     }
 
+    /// Replaces a bead's metadata object in a Dolt database and commits the change.
+    pub async fn update_bead_metadata(
+        &self,
+        db_name: &str,
+        id: &str,
+        metadata_json: &str,
+    ) -> Result<(), DoltError> {
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let mut conn = self.pool.get_conn().await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+
+        let query = format!(
+            "UPDATE `{}`.issues SET metadata = :metadata, updated_at = :now WHERE id = :id",
+            db_name
+        );
+        conn.exec_drop(
+            &query,
+            mysql_async::params! {
+                "metadata" => metadata_json,
+                "now" => &now,
+                "id" => id,
+            },
+        ).await.map_err(|e| DoltError::QueryFailed(format!("metadata update: {}", e)))?;
+
+        let use_query = format!("USE `{}`", db_name);
+        conn.query_drop(&use_query).await
+            .map_err(|e| DoltError::QueryFailed(format!("use_db: {}", e)))?;
+        let commit_query = format!(
+            "CALL DOLT_COMMIT('-Am', 'web-ui: update metadata {}')", id
+        );
+        conn.query_drop(&commit_query).await
+            .map_err(|e| DoltError::QueryFailed(format!("dolt_commit: {}", e)))?;
+
+        info!("Updated bead metadata {} in Dolt (db: {})", id, db_name);
+        Ok(())
+    }
+
 }
 
 /// Reads beads from a Dolt server on a specific port.
@@ -374,16 +411,38 @@ fn get_str(row: &Row, col: &str) -> String {
 }
 
 /// Queries issues from a Dolt database.
+async fn column_exists(conn: &mut mysql_async::Conn, db_name: &str, table: &str, column: &str) -> Result<bool, DoltError> {
+    let exists: Option<u8> = conn.exec_first(
+        "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :table AND COLUMN_NAME = :column LIMIT 1",
+        mysql_async::params! { "db" => db_name, "table" => table, "column" => column },
+    ).await.map_err(|e| DoltError::QueryFailed(format!("schema lookup: {}", e)))?;
+
+    Ok(exists.is_some())
+}
+
+fn get_json(row: &Row, col: &str) -> Option<serde_json::Value> {
+    let raw = row.get::<Option<String>, _>(col).flatten()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Queries issues from a Dolt database.
 async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec<Bead>, DoltError> {
+    let has_assignee = column_exists(conn, db_name, "issues", "assignee").await?;
+    let has_metadata = column_exists(conn, db_name, "issues", "metadata").await?;
+    let assignee_select = if has_assignee { "assignee" } else { "NULL AS assignee" };
+    let metadata_select = if has_metadata { "metadata" } else { "NULL AS metadata" };
+
     let query = format!(
         "SELECT id, title, description, `design`, status, priority, issue_type, \
-         owner, assignee, \
+         owner, {}, {}, \
          DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at, \
          created_by, \
          DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at, \
          DATE_FORMAT(closed_at, '%Y-%m-%dT%H:%i:%sZ') AS closed_at, \
          close_reason \
          FROM `{}`.issues",
+        assignee_select,
+        metadata_select,
         db_name
     );
     let rows: Vec<Row> = conn.query(&query).await
@@ -397,6 +456,8 @@ async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec
         priority: row.get::<Option<i32>, _>("priority").flatten(),
         issue_type: get_opt_str(row, "issue_type"),
         owner: get_opt_str(row, "owner"),
+        assignee: get_opt_str(row, "assignee"),
+        metadata: get_json(row, "metadata"),
         created_at: get_opt_str(row, "created_at"),
         created_by: get_opt_str(row, "created_by"),
         updated_at: get_opt_str(row, "updated_at"),

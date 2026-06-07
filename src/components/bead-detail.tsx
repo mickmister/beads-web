@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 
+import { BeadFormsSection } from "@/components/bead-forms-section";
 import { BeadPRSection } from "@/components/bead-pr-section";
 import { CopyableText } from "@/components/copyable-text";
 import { CreateBeadDialog } from "@/components/create-bead-dialog";
@@ -317,6 +318,13 @@ export function BeadDetail({
               </div>
             </div>
           )}
+
+          {/* Metadata Forms */}
+          <BeadFormsSection
+            bead={bead}
+            projectPath={projectPath}
+            onUpdate={onUpdate}
+          />
 
           {/* Related Tasks */}
           {relatedTasks.length > 0 && onChildClick && (

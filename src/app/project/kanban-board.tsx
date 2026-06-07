@@ -331,6 +331,8 @@ export default function KanbanBoard() {
           // Today
           todayOnly={filters.todayOnly}
           onTodayOnlyChange={(value) => setFilters({ todayOnly: value })}
+          myBoardOnly={filters.myBoardOnly}
+          onMyBoardOnlyChange={(value) => setFilters({ myBoardOnly: value })}
           // Sort
           sortField={filters.sortField}
           sortDirection={filters.sortDirection}

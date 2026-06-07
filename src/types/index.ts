@@ -123,6 +123,8 @@ export interface Bead {
   priority: number;
   issue_type: string;
   owner: string;
+  assignee?: string;
+  metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   comments: Comment[];
