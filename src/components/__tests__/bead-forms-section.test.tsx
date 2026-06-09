@@ -5,12 +5,12 @@ import type { Bead } from '@/types';
 
 import { BeadFormsSection } from '../bead-forms-section';
 
-const updateMetadata = vi.fn().mockResolvedValue({ success: true });
+const submitForm = vi.fn().mockResolvedValue({ success: true, webhookMarkdown: '**Thanks**' });
 const toast = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   beads: {
-    updateMetadata: (...args: unknown[]) => updateMetadata(...args),
+    submitForm: (...args: unknown[]) => submitForm(...args),
   },
 }));
 
@@ -35,10 +35,7 @@ const bead: Bead = {
         {
           id: 'review',
           title: 'Review form',
-          blocks: [
-            { type: 'markdown', markdown: '## Context' },
-            { type: 'textarea', name: 'comment', label: 'Comment', required: true },
-          ],
+          html: '<form><h2>Context</h2><label>Comment<textarea name="comment" required></textarea></label><button type="submit">Send</button></form>',
           responses: [],
         },
       ],
@@ -47,12 +44,12 @@ const bead: Bead = {
 };
 
 beforeEach(() => {
-  updateMetadata.mockClear();
+  submitForm.mockClear();
   toast.mockClear();
 });
 
 describe('BeadFormsSection', () => {
-  it('renders markdown and controls from bead metadata', () => {
+  it('renders sanitized HTML forms from bead metadata', () => {
     render(<BeadFormsSection bead={bead} projectPath="/project" />);
 
     expect(screen.getByText('Review form')).toBeInTheDocument();
@@ -60,33 +57,21 @@ describe('BeadFormsSection', () => {
     expect(screen.getByLabelText(/Comment/)).toBeInTheDocument();
   });
 
-  it('appends a response to metadata on submit', async () => {
+  it('submits form values to the beads form endpoint and renders webhook markdown', async () => {
     const onUpdate = vi.fn();
     render(<BeadFormsSection bead={bead} projectPath="/project" onUpdate={onUpdate} />);
 
     fireEvent.change(screen.getByLabelText(/Comment/), { target: { value: 'Looks good' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    await waitFor(() => expect(updateMetadata).toHaveBeenCalledTimes(1));
-    expect(updateMetadata.mock.calls[0][0]).toMatchObject({
+    await waitFor(() => expect(submitForm).toHaveBeenCalledTimes(1));
+    expect(submitForm).toHaveBeenCalledWith({
       path: '/project',
       id: 'bd-1',
-      metadata: {
-        beadsWeb: {
-          forms: [
-            {
-              id: 'review',
-              responses: [
-                {
-                  submittedBy: 'user',
-                  values: { comment: 'Looks good' },
-                },
-              ],
-            },
-          ],
-        },
-      },
+      formId: 'review',
+      values: { comment: 'Looks good' },
     });
+    expect(await screen.findByText('Thanks')).toBeInTheDocument();
     expect(onUpdate).toHaveBeenCalled();
   });
 });

@@ -219,3 +219,46 @@
   flex-shrink: 0;
 }
 
+
+/* Agent-authored HTML forms rendered from bead metadata. */
+.beads-html-form form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.beads-html-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-secondary, inherit);
+}
+
+.beads-html-form input:not([type="checkbox"]):not([type="radio"]),
+.beads-html-form textarea,
+.beads-html-form select {
+  width: 100%;
+  border-radius: 0.375rem;
+  border: 1px solid hsl(var(--input));
+  background: transparent;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.beads-html-form textarea {
+  min-height: 6rem;
+}
+
+.beads-html-form button,
+.beads-html-form input[type="submit"] {
+  align-self: flex-start;
+  border-radius: 0.375rem;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}

@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { Bead } from '@/types';
 
 import {
+  formDataToValues,
   getBeadForms,
-  validateFormResponse,
   mergeFormResponse,
-  createFormResponseJsonSchema,
+  sanitizeFormHtml,
 } from '../bead-forms';
 
 const baseBead: Bead = {
@@ -22,8 +22,8 @@ const baseBead: Bead = {
   comments: [],
 };
 
-describe('bead form DSL', () => {
-  it('extracts valid beadsWeb forms from bead metadata', () => {
+describe('bead HTML forms', () => {
+  it('extracts valid HTML forms from bead metadata', () => {
     const bead: Bead = {
       ...baseBead,
       metadata: {
@@ -32,10 +32,7 @@ describe('bead form DSL', () => {
             {
               id: 'review',
               title: 'Review',
-              blocks: [
-                { type: 'markdown', markdown: '## Context' },
-                { type: 'textarea', name: 'comment', label: 'Comment', required: true },
-              ],
+              html: '<form><label>Comment<textarea name="comment" required></textarea></label><button>Submit</button></form>',
             },
           ],
         },
@@ -46,9 +43,10 @@ describe('bead form DSL', () => {
 
     expect(forms).toHaveLength(1);
     expect(forms[0].id).toBe('review');
+    expect(forms[0].html).toContain('<form>');
   });
 
-  it('rejects duplicate control names', () => {
+  it('ignores legacy block DSL-only forms', () => {
     const bead: Bead = {
       ...baseBead,
       metadata: {
@@ -57,10 +55,7 @@ describe('bead form DSL', () => {
             {
               id: 'review',
               title: 'Review',
-              blocks: [
-                { type: 'text', name: 'comment', label: 'Comment' },
-                { type: 'textarea', name: 'comment', label: 'Comment again' },
-              ],
+              blocks: [{ type: 'textarea', name: 'comment', label: 'Comment' }],
             },
           ],
         },
@@ -70,64 +65,37 @@ describe('bead form DSL', () => {
     expect(getBeadForms(bead)).toHaveLength(0);
   });
 
-  it('validates required controls and select options', () => {
-    const form = getBeadForms({
-      ...baseBead,
-      metadata: {
-        beadsWeb: {
-          forms: [
-            {
-              id: 'review',
-              title: 'Review',
-              blocks: [
-                { type: 'textarea', name: 'comment', label: 'Comment', required: true },
-                {
-                  type: 'select',
-                  name: 'decision',
-                  label: 'Decision',
-                  required: true,
-                  options: [
-                    { label: 'Approve', value: 'approve' },
-                    { label: 'Reject', value: 'reject' },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      },
-    })[0];
+  it('sanitizes scripts, event handlers, external resources, and unsafe styles', () => {
+    const sanitized = sanitizeFormHtml(`
+      <form action="https://evil.example/post" method="get">
+        <script>alert(1)</script>
+        <img src="https://evil.example/tracker.png">
+        <input name="comment" onclick="alert(1)" style="color: red; background-image: url(javascript:alert(1)); position: fixed">
+        <a href="javascript:alert(1)">bad link</a>
+      </form>
+    `);
 
-    expect(validateFormResponse(form, { comment: '', decision: 'approve' }).success).toBe(false);
-    expect(validateFormResponse(form, { comment: 'LGTM', decision: 'maybe' }).success).toBe(false);
-    expect(validateFormResponse(form, { comment: 'LGTM', decision: 'approve' }).success).toBe(true);
+    expect(sanitized).not.toContain('<script');
+    expect(sanitized).not.toContain('<img');
+    expect(sanitized).not.toContain('onclick');
+    expect(sanitized).not.toContain('javascript:');
+    expect(sanitized).not.toContain('position');
+    expect(sanitized).toContain('style="color: red"');
+    expect(sanitized).toContain('action="/api/beads/forms/submit"');
+    expect(sanitized).toContain('method="post"');
   });
 
-  it('emits JSON Schema for controls', () => {
-    const form = getBeadForms({
-      ...baseBead,
-      metadata: {
-        beadsWeb: {
-          forms: [
-            {
-              id: 'review',
-              title: 'Review',
-              blocks: [
-                { type: 'text', name: 'summary', label: 'Summary', required: true },
-                { type: 'checkbox', name: 'approved', label: 'Approved' },
-              ],
-            },
-          ],
-        },
-      },
-    })[0];
+  it('converts FormData to response values with arrays for repeated fields', () => {
+    const formData = new FormData();
+    formData.append('comment', 'LGTM');
+    formData.append('labels', 'one');
+    formData.append('labels', 'two');
+    formData.append('__beadsWeb_formId', 'review');
 
-    const schema = createFormResponseJsonSchema(form) as any;
-
-    expect(schema.type).toBe('object');
-    expect(schema.required).toContain('summary');
-    expect(schema.properties.summary.type).toBe('string');
-    expect(schema.properties.approved.type).toBe('boolean');
+    expect(formDataToValues(formData)).toEqual({
+      comment: 'LGTM',
+      labels: ['one', 'two'],
+    });
   });
 
   it('appends response history while preserving unrelated metadata', () => {
@@ -138,14 +106,14 @@ describe('bead form DSL', () => {
           {
             id: 'review',
             title: 'Review',
+            html: '<form><textarea name="comment"></textarea></form>',
             responses: [{ submittedBy: 'user', submittedAt: 'old', values: { comment: 'old' } }],
-            blocks: [{ type: 'textarea', name: 'comment', label: 'Comment' }],
           },
         ],
       },
     };
 
-    const next = mergeFormResponse(metadata, 'review', { comment: 'new' }, '2026-06-07T00:00:00Z');
+    const next = mergeFormResponse(metadata, 'review', { comment: 'new' }, '2026-06-07T00:00:00Z', 'user', '**Thanks**');
     const form = (next as any).beadsWeb.forms[0];
 
     expect((next as any).untouched).toBe(true);
@@ -154,6 +122,7 @@ describe('bead form DSL', () => {
       submittedBy: 'user',
       submittedAt: '2026-06-07T00:00:00Z',
       values: { comment: 'new' },
+      webhookMarkdown: '**Thanks**',
     });
   });
 });

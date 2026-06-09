@@ -848,6 +848,307 @@ pub async fn update_bead_handler(
 }
 
 
+
+/// Request body for submitting an HTML form attached to a bead.
+#[derive(Debug, Deserialize)]
+pub struct SubmitBeadFormRequest {
+    /// Project path or `dolt://dbname`
+    pub path: String,
+    /// Bead ID to update
+    pub id: String,
+    /// Form ID under `metadata.beadsWeb.forms[]`
+    #[serde(rename = "formId")]
+    pub form_id: String,
+    /// Submitted field values. Repeated HTML field names are represented as arrays.
+    pub values: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SubmitBeadFormResponse {
+    pub success: bool,
+    #[serde(rename = "webhookMarkdown", skip_serializing_if = "Option::is_none")]
+    pub webhook_markdown: Option<String>,
+}
+
+fn append_form_response(
+    metadata: &mut serde_json::Value,
+    form_id: &str,
+    values: serde_json::Map<String, serde_json::Value>,
+    submitted_at: &str,
+    webhook_markdown: Option<&str>,
+) -> Result<(), String> {
+    if !metadata.is_object() {
+        *metadata = serde_json::json!({});
+    }
+
+    let root = metadata
+        .as_object_mut()
+        .ok_or_else(|| "Metadata must be an object".to_string())?;
+    let beads_web = root
+        .entry("beadsWeb".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !beads_web.is_object() {
+        *beads_web = serde_json::json!({});
+    }
+    let beads_web_obj = beads_web
+        .as_object_mut()
+        .ok_or_else(|| "beadsWeb metadata must be an object".to_string())?;
+    let forms_value = beads_web_obj
+        .entry("forms".to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    let forms = forms_value
+        .as_array_mut()
+        .ok_or_else(|| "beadsWeb.forms must be an array".to_string())?;
+
+    let form = forms
+        .iter_mut()
+        .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
+        .ok_or_else(|| format!("Form not found: {}", form_id))?;
+
+    let form_obj = form
+        .as_object_mut()
+        .ok_or_else(|| "Form metadata must be an object".to_string())?;
+    let responses_value = form_obj
+        .entry("responses".to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    let responses = responses_value
+        .as_array_mut()
+        .ok_or_else(|| "Form responses must be an array".to_string())?;
+
+    let mut response = serde_json::Map::new();
+    response.insert("submittedBy".to_string(), serde_json::Value::String("user".to_string()));
+    response.insert("submittedAt".to_string(), serde_json::Value::String(submitted_at.to_string()));
+    response.insert("values".to_string(), serde_json::Value::Object(values));
+    if let Some(markdown) = webhook_markdown {
+        response.insert("webhookMarkdown".to_string(), serde_json::Value::String(markdown.to_string()));
+    }
+    responses.push(serde_json::Value::Object(response));
+    Ok(())
+}
+
+
+fn attach_form_response_webhook_markdown(
+    metadata: &mut serde_json::Value,
+    form_id: &str,
+    submitted_at: &str,
+    markdown: &str,
+) -> Result<(), String> {
+    let forms = metadata
+        .get_mut("beadsWeb")
+        .and_then(|beads_web| beads_web.get_mut("forms"))
+        .and_then(|forms| forms.as_array_mut())
+        .ok_or_else(|| "beadsWeb.forms must be an array".to_string())?;
+    let form = forms
+        .iter_mut()
+        .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
+        .ok_or_else(|| format!("Form not found: {}", form_id))?;
+    let responses = form
+        .get_mut("responses")
+        .and_then(|responses| responses.as_array_mut())
+        .ok_or_else(|| "Form responses must be an array".to_string())?;
+    let response = responses
+        .iter_mut()
+        .rev()
+        .find(|candidate| candidate.get("submittedAt").and_then(|value| value.as_str()) == Some(submitted_at))
+        .ok_or_else(|| "Submitted response not found".to_string())?;
+    let response_obj = response
+        .as_object_mut()
+        .ok_or_else(|| "Form response must be an object".to_string())?;
+    response_obj.insert("webhookMarkdown".to_string(), serde_json::Value::String(markdown.to_string()));
+    Ok(())
+}
+
+async fn read_bead_metadata_from_cli(project_path: &Path, bead_id: &str) -> Result<serde_json::Value, String> {
+    let output = run_bd(&["show", bead_id, "--json", "--long"], project_path).await?;
+    let json_str = extract_json_array(&output)?;
+    let beads: Vec<Bead> = serde_json::from_str(json_str)
+        .map_err(|e| format!("Failed to parse bd show output: {}", e))?;
+    let bead = beads
+        .into_iter()
+        .find(|candidate| candidate.id == bead_id)
+        .ok_or_else(|| format!("Bead not found: {}", bead_id))?;
+    Ok(bead.metadata.unwrap_or_else(|| serde_json::json!({})))
+}
+
+async fn update_metadata_with_cli(project_path: &Path, bead_id: &str, metadata: &serde_json::Value) -> Result<(), String> {
+    let metadata_json = serde_json::to_string(metadata)
+        .map_err(|e| format!("Invalid metadata: {}", e))?;
+    let bd_path = super::find_bd()
+        .ok_or_else(|| "bd CLI not found".to_string())?
+        .clone();
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        Command::new(bd_path)
+            .args(["update", bead_id, "--metadata", metadata_json.as_str()])
+            .current_dir(project_path)
+            .output(),
+    ).await.map_err(|_| "bd command timed out".to_string())?
+        .map_err(|e| format!("Failed to execute bd: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+async fn call_form_webhook(
+    req: &SubmitBeadFormRequest,
+    submitted_at: &str,
+) -> Result<Option<String>, String> {
+    let webhook_url = match std::env::var("BEADS_WEB_FORM_WEBHOOK_URL") {
+        Ok(url) if !url.trim().is_empty() => url,
+        _ => return Ok(None),
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to build webhook client: {}", e))?;
+
+    let response = client
+        .post(&webhook_url)
+        .json(&serde_json::json!({
+            "path": &req.path,
+            "beadId": &req.id,
+            "formId": &req.form_id,
+            "submittedBy": "user",
+            "submittedAt": submitted_at,
+            "values": &req.values,
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Form webhook failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Form webhook returned {}", response.status()));
+    }
+
+    let markdown = response.text().await
+        .map_err(|e| format!("Failed to read form webhook response: {}", e))?;
+    let trimmed = markdown.trim().to_string();
+    Ok((!trimmed.is_empty()).then_some(trimmed))
+}
+
+/// POST /api/beads/forms/submit
+///
+/// Appends a submitted HTML form response to `metadata.beadsWeb.forms[].responses`.
+/// If `BEADS_WEB_FORM_WEBHOOK_URL` is set, a JSON payload is posted after the
+/// bead metadata update succeeds; any markdown response is persisted with the
+/// form response and returned to the UI for rendering below the form.
+pub async fn submit_bead_form_handler(
+    Extension(dolt_manager): Extension<Arc<DoltManager>>,
+    Json(req): Json<SubmitBeadFormRequest>,
+) -> impl IntoResponse {
+    if req.id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Bead ID is required" })),
+        ).into_response();
+    }
+    if req.form_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Form ID is required" })),
+        ).into_response();
+    }
+
+    let submitted_at = Utc::now().to_rfc3339();
+    let mut metadata = if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
+        if !dolt_manager.is_available() && !dolt_manager.check_server().await {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "Dolt server is not running" })),
+            ).into_response();
+        }
+        match dolt_manager.read_beads(db_name).await {
+            Ok(beads) => beads
+                .into_iter()
+                .find(|bead| bead.id == req.id)
+                .and_then(|bead| bead.metadata)
+                .unwrap_or_else(|| serde_json::json!({})),
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                ).into_response();
+            }
+        }
+    } else {
+        let project_path = PathBuf::from(&req.path);
+        if let Err(e) = validate_path_security(&project_path) {
+            return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": e }))).into_response();
+        }
+        match read_bead_metadata_from_cli(&project_path, &req.id).await {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e })),
+                ).into_response();
+            }
+        }
+    };
+
+    if let Err(e) = append_form_response(&mut metadata, &req.form_id, req.values.clone(), &submitted_at, None) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response();
+    }
+
+    if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
+        let metadata_json = match serde_json::to_string(&metadata) {
+            Ok(json) => json,
+            Err(e) => {
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
+            }
+        };
+        if let Err(e) = dolt_manager.update_bead_metadata(db_name, &req.id, &metadata_json).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            ).into_response();
+        }
+    } else {
+        let project_path = PathBuf::from(&req.path);
+        if let Err(e) = update_metadata_with_cli(&project_path, &req.id, &metadata).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e })),
+            ).into_response();
+        }
+    }
+
+    let webhook_markdown = match call_form_webhook(&req, &submitted_at).await {
+        Ok(markdown) => markdown,
+        Err(e) => {
+            tracing::warn!("{}", e);
+            None
+        }
+    };
+
+    if let Some(markdown) = webhook_markdown.as_deref() {
+        if let Err(e) = attach_form_response_webhook_markdown(&mut metadata, &req.form_id, &submitted_at, markdown) {
+            tracing::warn!("Failed to attach webhook markdown: {}", e);
+        } else if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
+            if let Ok(metadata_json) = serde_json::to_string(&metadata) {
+                if let Err(e) = dolt_manager.update_bead_metadata(db_name, &req.id, &metadata_json).await {
+                    tracing::warn!("Failed to persist webhook markdown: {}", e);
+                }
+            }
+        } else {
+            let project_path = PathBuf::from(&req.path);
+            if let Err(e) = update_metadata_with_cli(&project_path, &req.id, &metadata).await {
+                tracing::warn!("Failed to persist webhook markdown: {}", e);
+            }
+        }
+    }
+
+    Json(SubmitBeadFormResponse {
+        success: true,
+        webhook_markdown,
+    }).into_response()
+}
+
 /// Request body for replacing a bead metadata object.
 #[derive(Debug, Deserialize)]
 pub struct UpdateBeadMetadataRequest {

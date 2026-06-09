@@ -107,6 +107,28 @@ describe('api.beads', () => {
     });
   });
 
+  describe('submitForm', () => {
+    it('calls POST /api/beads/forms/submit with correct body', async () => {
+      const submitData = {
+        path: '/my/project',
+        id: 'bead-123',
+        formId: 'review',
+        values: { comment: 'LGTM' },
+      };
+
+      mockFetch.mockResolvedValue(mockResponse({ success: true, webhookMarkdown: 'Thanks' }));
+
+      const result = await api.beads.submitForm(submitData);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url, options] = mockFetch.mock.calls[0];
+      expect(url).toContain('/api/beads/forms/submit');
+      expect(options.method).toBe('POST');
+      expect(JSON.parse(options.body)).toEqual(submitData);
+      expect(result).toEqual({ success: true, webhookMarkdown: 'Thanks' });
+    });
+  });
+
   describe('read', () => {
     it('calls GET /api/beads with path query param', async () => {
       mockFetch.mockResolvedValue(mockResponse({ beads: [] }));

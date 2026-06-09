@@ -4,106 +4,174 @@ import type { Bead } from '@/types';
 
 export type JsonObject = Record<string, unknown>;
 
-const FormOptionSchema = z.object({
-  label: z.string().min(1),
-  value: z.string().min(1),
-});
-
-const BaseControlSchema = z.object({
-  name: z.string().min(1).regex(/^[A-Za-z_][A-Za-z0-9_-]*$/),
-  label: z.string().min(1),
-  description: z.string().optional(),
-  required: z.boolean().optional(),
-  default: z.unknown().optional(),
-});
-
-const MarkdownBlockSchema = z.object({
-  type: z.literal('markdown'),
-  markdown: z.string(),
-});
-
-const TextBlockSchema = BaseControlSchema.extend({
-  type: z.literal('text'),
-  placeholder: z.string().optional(),
-  minLength: z.number().int().nonnegative().optional(),
-  maxLength: z.number().int().positive().optional(),
-});
-
-const TextareaBlockSchema = BaseControlSchema.extend({
-  type: z.literal('textarea'),
-  placeholder: z.string().optional(),
-  minLength: z.number().int().nonnegative().optional(),
-  maxLength: z.number().int().positive().optional(),
-});
-
-const CheckboxBlockSchema = BaseControlSchema.extend({
-  type: z.literal('checkbox'),
-});
-
-const ChoiceBlockSchema = BaseControlSchema.extend({
-  type: z.union([z.literal('select'), z.literal('radio')]),
-  options: z.array(FormOptionSchema).min(1),
-  placeholder: z.string().optional(),
-});
-
-const NumberBlockSchema = BaseControlSchema.extend({
-  type: z.literal('number'),
-  placeholder: z.string().optional(),
-  min: z.number().optional(),
-  max: z.number().optional(),
-});
-
-export const BeadFormBlockSchema = z.discriminatedUnion('type', [
-  MarkdownBlockSchema,
-  TextBlockSchema,
-  TextareaBlockSchema,
-  CheckboxBlockSchema,
-  ChoiceBlockSchema,
-  NumberBlockSchema,
-]);
-
 export const BeadFormResponseSchema = z.object({
   submittedBy: z.string().min(1),
   submittedAt: z.string().min(1),
   values: z.record(z.string(), z.unknown()),
+  webhookMarkdown: z.string().optional(),
 });
 
-const BeadFormBaseSchema = z.object({
+export const BeadFormSchema = z.object({
   id: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
   title: z.string().min(1),
   description: z.string().optional(),
   version: z.number().int().positive().optional(),
-  blocks: z.array(BeadFormBlockSchema).min(1),
-  responseSchema: z.record(z.string(), z.unknown()).optional(),
+  html: z.string().min(1),
   responses: z.array(BeadFormResponseSchema).optional(),
-});
-
-export const BeadFormSchema = BeadFormBaseSchema.superRefine((form, ctx) => {
-  const names = new Set<string>();
-  for (const block of form.blocks) {
-    if (block.type === 'markdown') continue;
-    if (names.has(block.name)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['blocks'],
-        message: `Duplicate form control name: ${block.name}`,
-      });
-    }
-    names.add(block.name);
-  }
-});
+}).passthrough();
 
 export const BeadsWebMetadataSchema = z.object({
   forms: z.array(BeadFormSchema).optional(),
 }).passthrough();
 
-export type FormOption = z.infer<typeof FormOptionSchema>;
-export type BeadFormBlock = z.infer<typeof BeadFormBlockSchema>;
 export type BeadForm = z.infer<typeof BeadFormSchema>;
 export type BeadFormResponse = z.infer<typeof BeadFormResponseSchema>;
 
+const ALLOWED_TAGS = new Set([
+  'a', 'abbr', 'blockquote', 'br', 'button', 'caption', 'code', 'col', 'colgroup',
+  'dd', 'del', 'details', 'dfn', 'div', 'dl', 'dt', 'em', 'fieldset', 'form', 'h1',
+  'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'input', 'ins', 'kbd', 'label', 'legend', 'li',
+  'mark', 'ol', 'optgroup', 'option', 'output', 'p', 'pre', 's', 'samp', 'section',
+  'select', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td',
+  'textarea', 'tfoot', 'th', 'thead', 'tr', 'u', 'ul', 'var',
+]);
+
+const GLOBAL_ATTRS = new Set([
+  'aria-describedby', 'aria-label', 'aria-labelledby', 'aria-required', 'class', 'dir',
+  'for', 'id', 'lang', 'role', 'style', 'title',
+]);
+
+const TAG_ATTRS: Record<string, Set<string>> = {
+  a: new Set(['href', 'target', 'rel']),
+  button: new Set(['disabled', 'name', 'type', 'value']),
+  col: new Set(['span']),
+  form: new Set(['action', 'method', 'name']),
+  input: new Set([
+    'accept', 'autocomplete', 'checked', 'disabled', 'max', 'maxlength', 'min',
+    'minlength', 'multiple', 'name', 'pattern', 'placeholder', 'readonly', 'required',
+    'step', 'type', 'value',
+  ]),
+  label: new Set(['for']),
+  optgroup: new Set(['disabled', 'label']),
+  option: new Set(['disabled', 'label', 'selected', 'value']),
+  output: new Set(['for', 'name']),
+  select: new Set(['autocomplete', 'disabled', 'multiple', 'name', 'required', 'size']),
+  textarea: new Set(['autocomplete', 'cols', 'disabled', 'maxlength', 'minlength', 'name', 'placeholder', 'readonly', 'required', 'rows']),
+  td: new Set(['colspan', 'headers', 'rowspan']),
+  th: new Set(['colspan', 'headers', 'rowspan', 'scope']),
+};
+
+const SAFE_INPUT_TYPES = new Set([
+  'checkbox', 'date', 'datetime-local', 'email', 'hidden', 'month', 'number', 'password',
+  'radio', 'range', 'search', 'tel', 'text', 'time', 'url', 'week',
+]);
+
+const SAFE_CSS_PROPERTIES = new Set([
+  'align-items', 'background-color', 'border', 'border-color', 'border-radius',
+  'border-style', 'border-width', 'color', 'display', 'flex-direction', 'font-size',
+  'font-style', 'font-weight', 'gap', 'grid-template-columns', 'justify-content',
+  'line-height', 'margin', 'margin-bottom', 'margin-left', 'margin-right', 'margin-top',
+  'max-width', 'min-width', 'padding', 'padding-bottom', 'padding-left', 'padding-right',
+  'padding-top', 'text-align', 'text-decoration', 'width', 'white-space',
+]);
+
+const UNSAFE_CSS_VALUE = /url\s*\(|expression\s*\(|@import|behavior\s*:|javascript:/i;
+
 function isObject(value: unknown): value is JsonObject {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isSafeUrl(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  return trimmed.startsWith('#') || trimmed.startsWith('/') || trimmed.startsWith('mailto:');
+}
+
+function sanitizeStyle(value: string): string {
+  return value
+    .split(';')
+    .map((declaration) => declaration.trim())
+    .filter(Boolean)
+    .map((declaration) => {
+      const [property, ...rest] = declaration.split(':');
+      const name = property?.trim().toLowerCase();
+      const cssValue = rest.join(':').trim();
+      if (!name || !cssValue) return '';
+      if (!SAFE_CSS_PROPERTIES.has(name)) return '';
+      if (UNSAFE_CSS_VALUE.test(cssValue)) return '';
+      return `${name}: ${cssValue}`;
+    })
+    .filter(Boolean)
+    .join('; ');
+}
+
+function sanitizeElement(element: Element): void {
+  const tagName = element.tagName.toLowerCase();
+
+  for (const attr of Array.from(element.attributes)) {
+    const name = attr.name.toLowerCase();
+    const value = attr.value;
+    const isAllowed = GLOBAL_ATTRS.has(name) || TAG_ATTRS[tagName]?.has(name);
+
+    if (!isAllowed || name.startsWith('on')) {
+      element.removeAttribute(attr.name);
+      continue;
+    }
+
+    if (name === 'style') {
+      const safeStyle = sanitizeStyle(value);
+      if (safeStyle) element.setAttribute('style', safeStyle);
+      else element.removeAttribute('style');
+      continue;
+    }
+
+    if (name === 'href' && !isSafeUrl(value)) {
+      element.removeAttribute(attr.name);
+      continue;
+    }
+
+    if (tagName === 'input' && name === 'type' && !SAFE_INPUT_TYPES.has(value.toLowerCase())) {
+      element.setAttribute('type', 'text');
+      continue;
+    }
+
+    if (tagName === 'form' && name === 'method') {
+      element.setAttribute('method', 'post');
+      continue;
+    }
+
+    if (tagName === 'form' && name === 'action') {
+      element.setAttribute('action', '/api/beads/forms/submit');
+    }
+  }
+
+  if (tagName === 'form') {
+    element.setAttribute('method', 'post');
+    element.setAttribute('action', '/api/beads/forms/submit');
+  }
+}
+
+function sanitizeNode(node: Node): void {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType === Node.ELEMENT_NODE) {
+      const element = child as Element;
+      const tagName = element.tagName.toLowerCase();
+      if (!ALLOWED_TAGS.has(tagName)) {
+        element.replaceWith(...Array.from(element.childNodes));
+        continue;
+      }
+      sanitizeElement(element);
+      sanitizeNode(element);
+    } else if (child.nodeType !== Node.TEXT_NODE) {
+      child.remove();
+    }
+  }
+}
+
+export function sanitizeFormHtml(html: string): string {
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return '';
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  sanitizeNode(document.body);
+  return document.body.innerHTML;
 }
 
 export function getBeadForms(bead: Pick<Bead, 'metadata'>): BeadForm[] {
@@ -116,65 +184,20 @@ export function getBeadForms(bead: Pick<Bead, 'metadata'>): BeadForm[] {
   return parsed.data.forms ?? [];
 }
 
-function stringSchemaFor(block: Extract<BeadFormBlock, { type: 'text' | 'textarea' }>): z.ZodTypeAny {
-  let schema = z.string();
-  if (block.required) schema = schema.trim().min(1, `${block.label} is required`);
-  if (block.minLength !== undefined) schema = schema.min(block.minLength);
-  if (block.maxLength !== undefined) schema = schema.max(block.maxLength);
-  return block.required ? schema : schema.optional().or(z.literal(''));
-}
-
-function schemaForBlock(block: Exclude<BeadFormBlock, { type: 'markdown' }>): z.ZodTypeAny {
-  switch (block.type) {
-    case 'text':
-    case 'textarea':
-      return stringSchemaFor(block);
-    case 'checkbox':
-      return block.required ? z.boolean() : z.boolean().optional();
-    case 'select':
-    case 'radio': {
-      const values = block.options.map((option) => option.value);
-      const schema = z.string().refine((value) => values.includes(value), `${block.label} must be one of the available options`);
-      return block.required ? schema : schema.optional().or(z.literal(''));
-    }
-    case 'number': {
-      let schema = z.coerce.number();
-      if (block.min !== undefined) schema = schema.min(block.min);
-      if (block.max !== undefined) schema = schema.max(block.max);
-      return block.required ? schema : schema.optional();
+export function formDataToValues(formData: FormData): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const [key, value] of Array.from(formData.entries())) {
+    if (key.startsWith('__beadsWeb_')) continue;
+    const normalized = value instanceof File ? value.name : value;
+    if (values[key] === undefined) {
+      values[key] = normalized;
+    } else if (Array.isArray(values[key])) {
+      (values[key] as unknown[]).push(normalized);
+    } else {
+      values[key] = [values[key], normalized];
     }
   }
-}
-
-export function createFormResponseSchema(form: BeadForm): z.ZodObject<Record<string, z.ZodTypeAny>> {
-  const shape: Record<string, z.ZodTypeAny> = {};
-  for (const block of form.blocks) {
-    if (block.type === 'markdown') continue;
-    shape[block.name] = schemaForBlock(block);
-  }
-  return z.object(shape).strict();
-}
-
-export function createFormResponseJsonSchema(form: BeadForm): unknown {
-  return z.toJSONSchema(createFormResponseSchema(form), { target: 'draft-2020-12', io: 'input' });
-}
-
-export function validateFormResponse(form: BeadForm, values: Record<string, unknown>) {
-  return createFormResponseSchema(form).safeParse(values);
-}
-
-export function getFormInitialValues(form: BeadForm): Record<string, unknown> {
-  const latest = form.responses?.at(-1)?.values;
-  if (latest && isObject(latest)) return { ...latest };
-
-  const initial: Record<string, unknown> = {};
-  for (const block of form.blocks) {
-    if (block.type === 'markdown') continue;
-    if (block.default !== undefined) initial[block.name] = block.default;
-    else if (block.type === 'checkbox') initial[block.name] = false;
-    else initial[block.name] = '';
-  }
-  return initial;
+  return values;
 }
 
 export function mergeFormResponse(
@@ -182,7 +205,8 @@ export function mergeFormResponse(
   formId: string,
   values: Record<string, unknown>,
   submittedAt: string = new Date().toISOString(),
-  submittedBy = 'user'
+  submittedBy = 'user',
+  webhookMarkdown?: string
 ): JsonObject {
   const next: JsonObject = isObject(metadata) ? structuredClone(metadata) as JsonObject : {};
   if (!isObject(next.beadsWeb)) next.beadsWeb = {};
@@ -197,6 +221,8 @@ export function mergeFormResponse(
 
   if (!Array.isArray(form.responses)) form.responses = [];
   const responses = form.responses as unknown[];
-  responses.push({ submittedBy, submittedAt, values });
+  const response: BeadFormResponse = { submittedBy, submittedAt, values };
+  if (webhookMarkdown) response.webhookMarkdown = webhookMarkdown;
+  responses.push(response);
   return next;
 }
