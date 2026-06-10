@@ -80,7 +80,7 @@ jobs:
           commit_body="$(git log -1 --format=%b "$beads_web_sha")"
           release_tag="beads-web-assets-${beads_web_sha}"
           release_name="beads-web assets (${short_sha})"
-          release_draft="true"
+          release_draft="false"
           release_prerelease="true"
           make_latest="false"
           generate_release_notes="false"
@@ -96,7 +96,7 @@ jobs:
             full_release="true"
           elif git branch -r --contains "$beads_web_sha" | grep -Eq '^[[:space:]]*origin/main$'; then
             release_draft="false"
-            release_prerelease="false"
+            release_prerelease="true"
           fi
 
           echo "should_run=true" >> "$GITHUB_OUTPUT"
@@ -199,14 +199,32 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
           RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
           RELEASE_BODY: ${{ needs.prepare.outputs.release_body }}
+          RELEASE_DRAFT: ${{ needs.prepare.outputs.release_draft }}
+          RELEASE_PRERELEASE: ${{ needs.prepare.outputs.release_prerelease }}
         run: |
           set -euo pipefail
 
           notes_file="$(mktemp)"
           printf '%s\n' "$RELEASE_BODY" > "$notes_file"
-          gh release edit "$RELEASE_TAG" \
-            --title "$RELEASE_NAME" \
+
+          release_args=(
+            --title "$RELEASE_NAME"
             --notes-file "$notes_file"
+          )
+
+          if [[ "$RELEASE_DRAFT" == "true" ]]; then
+            release_args+=(--draft)
+          else
+            release_args+=(--draft=false)
+          fi
+
+          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+            release_args+=(--prerelease)
+          else
+            release_args+=(--prerelease=false)
+          fi
+
+          gh release edit "$RELEASE_TAG" "${release_args[@]}"
 
   build:
     needs: prepare
