@@ -76,6 +76,8 @@ jobs:
           fi
 
           short_sha="${beads_web_sha:0:12}"
+          commit_subject="$(git log -1 --format=%s "$beads_web_sha")"
+          commit_body="$(git log -1 --format=%b "$beads_web_sha")"
           release_tag="beads-web-assets-${beads_web_sha}"
           release_name="beads-web assets (${short_sha})"
           release_draft="true"
@@ -125,15 +127,23 @@ jobs:
             echo 'beads-web-linux-x64' >> "$GITHUB_OUTPUT"
             echo 'EOF' >> "$GITHUB_OUTPUT"
           fi
-          echo 'release_body<<EOF' >> "$GITHUB_OUTPUT"
-          cat <<EOF >> "$GITHUB_OUTPUT"
-          Release assets for beads-web commit ${beads_web_sha}.
+          release_body_file="$(mktemp)"
+          {
+            printf 'Release assets for beads-web commit %s.\n\n' "$beads_web_sha"
+            printf '## Commit\n\n'
+            printf '%s (`%s`)\n\n' "$commit_subject" "$short_sha"
+            if [[ -n "$commit_body" ]]; then
+              printf '%s\n\n' "$commit_body"
+            fi
+            printf '## Assets\n\n'
+            printf 'Deterministic lookup tag: `%s`\n\n' "$release_tag"
+            printf '%s\n' "$asset_description"
+          } > "$release_body_file"
 
-          Deterministic lookup tag: \`${release_tag}\`
-
-          ${asset_description}
-          EOF
-          echo 'EOF' >> "$GITHUB_OUTPUT"
+          release_body_delimiter="release_body_$(openssl rand -hex 16)"
+          echo "release_body<<${release_body_delimiter}" >> "$GITHUB_OUTPUT"
+          cat "$release_body_file" >> "$GITHUB_OUTPUT"
+          echo "${release_body_delimiter}" >> "$GITHUB_OUTPUT"
 
       - name: Preflight existing release assets
         id: preflight
@@ -174,6 +184,29 @@ jobs:
           else
             echo "assets_exist=false" >> "$GITHUB_OUTPUT"
           fi
+
+  update-existing-release-notes:
+    needs: prepare
+    if: needs.prepare.outputs.should_run == 'true' && needs.prepare.outputs.assets_exist == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Update GitHub Release description
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_NAME: ${{ needs.prepare.outputs.release_name }}
+          RELEASE_BODY: ${{ needs.prepare.outputs.release_body }}
+        run: |
+          set -euo pipefail
+
+          notes_file="$(mktemp)"
+          printf '%s\n' "$RELEASE_BODY" > "$notes_file"
+          gh release edit "$RELEASE_TAG" \
+            --title "$RELEASE_NAME" \
+            --notes-file "$notes_file"
 
   build:
     needs: prepare
