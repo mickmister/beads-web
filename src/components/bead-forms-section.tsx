@@ -1,16 +1,21 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import ReactMarkdown from "react-markdown";
 
 import { toast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
 import {
-  formDataToValues,
+  applyFormLiveValues,
+  formElementToValues,
+  getFormIdentifierErrors,
+  getFormLiveValues,
   getBeadForms,
+  setFormLiveValues,
   sanitizeFormHtml,
   type BeadForm,
+  type FormLiveValues,
 } from "@/lib/bead-forms";
 import type { Bead } from "@/types";
 
@@ -30,9 +35,45 @@ interface BeadFormRendererProps {
 function BeadFormRenderer({ bead, form, projectPath, onUpdate }: BeadFormRendererProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [webhookMarkdown, setWebhookMarkdown] = useState<string | null>(form.responses?.at(-1)?.webhookMarkdown ?? null);
+  const [liveValues, setLiveValues] = useState<FormLiveValues>(() => getFormLiveValues(form));
   const latestResponse = form.responses?.at(-1);
   const canSubmit = !!projectPath;
   const sanitizedHtml = useMemo(() => sanitizeFormHtml(form.html), [form.html]);
+  const identifierErrors = useMemo(() => getFormIdentifierErrors(form.html), [form.html]);
+  const renderedHtml = useMemo(() => applyFormLiveValues(sanitizedHtml, liveValues), [sanitizedHtml, liveValues]);
+
+  useEffect(() => {
+    setLiveValues(getFormLiveValues(form));
+  }, [form]);
+
+  const handleLiveChange = async (event: React.FormEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.type.toLowerCase() !== 'checkbox') return;
+
+    const identifier = target.id.trim() || target.name.trim();
+    if (!identifier) return;
+    if (!projectPath) {
+      toast({ variant: "destructive", title: "Cannot save checkbox", description: "Open this bead from a project to update checkbox state." });
+      target.checked = !target.checked;
+      return;
+    }
+
+    const checked = target.checked;
+    const previous = liveValues;
+    const next = { ...liveValues, [identifier]: checked };
+    setLiveValues(next);
+
+    try {
+      const metadata = setFormLiveValues(bead.metadata ?? {}, form.id, next);
+      await api.beads.updateMetadata({ path: projectPath, id: bead.id, metadata });
+      onUpdate?.();
+    } catch (error) {
+      setLiveValues(previous);
+      target.checked = Boolean(previous[identifier]);
+      toast({ variant: "destructive", title: "Failed to save checkbox", description: error instanceof Error ? error.message : "Unknown error" });
+    }
+  };
 
   const handleSubmit = async (event: React.FormEvent<HTMLDivElement>) => {
     const target = event.target;
@@ -41,9 +82,14 @@ function BeadFormRenderer({ bead, form, projectPath, onUpdate }: BeadFormRendere
     event.preventDefault();
     if (!projectPath) return;
 
+    if (identifierErrors.length > 0) {
+      toast({ variant: "destructive", title: "Cannot submit form", description: "Every form input needs a unique id or name." });
+      return;
+    }
+
     if (!target.reportValidity()) return;
 
-    const values = formDataToValues(new FormData(target));
+    const values = formElementToValues(target);
     setIsSubmitting(true);
     try {
       const response = await api.beads.submitForm({
@@ -77,9 +123,18 @@ function BeadFormRenderer({ bead, form, projectPath, onUpdate }: BeadFormRendere
       <div
         className="beads-html-form prose prose-sm max-w-none dark:prose-invert text-t-tertiary"
         onSubmit={handleSubmit}
-        dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+        onClick={handleLiveChange}
+        dangerouslySetInnerHTML={{ __html: renderedHtml }}
       />
 
+      {identifierErrors.length > 0 && (
+        <div className="rounded-md border border-danger/30 bg-danger/10 p-3 text-xs text-danger">
+          <p className="font-semibold">This form needs unique identifiers before it can be safely submitted.</p>
+          <ul className="mt-1 list-disc pl-4">
+            {identifierErrors.map((error) => <li key={error}>{error}</li>)}
+          </ul>
+        </div>
+      )}
       {!canSubmit && (
         <p className="text-xs text-t-muted">Open this bead from a project to submit the form.</p>
       )}

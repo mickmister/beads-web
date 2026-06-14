@@ -6,11 +6,13 @@ import type { Bead } from '@/types';
 import { BeadFormsSection } from '../bead-forms-section';
 
 const submitForm = vi.fn().mockResolvedValue({ success: true, webhookMarkdown: '**Thanks**' });
+const updateMetadata = vi.fn().mockResolvedValue({ success: true });
 const toast = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   beads: {
     submitForm: (...args: unknown[]) => submitForm(...args),
+    updateMetadata: (...args: unknown[]) => updateMetadata(...args),
   },
 }));
 
@@ -45,6 +47,7 @@ const bead: Bead = {
 
 beforeEach(() => {
   submitForm.mockClear();
+  updateMetadata.mockClear();
   toast.mockClear();
 });
 
@@ -72,6 +75,46 @@ describe('BeadFormsSection', () => {
       values: { comment: 'Looks good' },
     });
     expect(await screen.findByText('Thanks')).toBeInTheDocument();
+    expect(onUpdate).toHaveBeenCalled();
+  });
+
+  it('persists live checkbox state to metadata', async () => {
+    const checkboxBead: Bead = {
+      ...bead,
+      metadata: {
+        beadsWeb: {
+          forms: [
+            {
+              id: 'review',
+              title: 'Review form',
+              html: '<form><label><input id="ack" type="checkbox"> Ack</label><button type="submit">Send</button></form>',
+              responses: [],
+            },
+          ],
+        },
+      },
+    };
+    const onUpdate = vi.fn();
+
+    render(<BeadFormsSection bead={checkboxBead} projectPath="/project" onUpdate={onUpdate} />);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /Ack/ }));
+
+    await waitFor(() => expect(updateMetadata).toHaveBeenCalledTimes(1));
+    expect(updateMetadata).toHaveBeenCalledWith({
+      path: '/project',
+      id: 'bd-1',
+      metadata: {
+        beadsWeb: {
+          forms: [
+            expect.objectContaining({
+              id: 'review',
+              liveValues: { ack: true },
+            }),
+          ],
+        },
+      },
+    });
     expect(onUpdate).toHaveBeenCalled();
   });
 });

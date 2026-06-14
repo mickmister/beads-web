@@ -151,6 +151,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
   const blocked = isBlocked(bead, allBeads);
   const commentCount = (bead.comments ?? []).length;
   const relatedCount = (bead.relates_to ?? []).length;
+  const labels = (bead.labels ?? []).filter(Boolean);
 
   const hasWorktree = worktreeStatus?.exists ?? false;
   const hasPR = prStatus?.pr !== null && prStatus?.pr !== undefined;
@@ -244,7 +245,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
               {bead.title}
             </span>
           </div>
-          {(bead.description || inlinePRBadge) && (
+          {(bead.description || inlinePRBadge || labels.length > 0) && (
             <div className="flex items-center gap-2 mt-0.5">
               {blocked && (
                 <Badge variant="destructive" appearance="light" size="xs">BLOCKED</Badge>
@@ -255,6 +256,11 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
                 </span>
               )}
               {inlinePRBadge}
+              {labels.slice(0, 2).map((label) => (
+                <Badge key={label} variant="outline" size="xs" className="text-[10px]">
+                  {label}
+                </Badge>
+              ))}
             </div>
           )}
         </div>
@@ -325,6 +331,11 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
             </span>
           )}
           {inlinePRBadge}
+          {labels.map((label) => (
+            <span key={label} className="theme-badge text-[10px] font-medium px-1.5 py-0.5 bg-info/10 text-info">
+              {label}
+            </span>
+          ))}
           {commentCount > 0 && (
             <span className="text-[10px] text-t-faint px-1">
               {commentCount} {commentCount === 1 ? "comment" : "comments"}
@@ -388,6 +399,16 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
               <Badge variant="outline" size="xs" className="theme-badge">{getTypeLabel(bead)}</Badge>
             </div>
           </div>
+
+          {labels.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {labels.map((label) => (
+                <Badge key={label} variant="outline" size="xs" className="theme-badge bg-info/10 text-info border-info/30">
+                  {label}
+                </Badge>
+              ))}
+            </div>
+          )}
 
           {/* Row 2: Title */}
           <div className="font-semibold text-sm leading-tight">

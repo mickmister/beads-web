@@ -26,6 +26,7 @@ export const BeadsWebMetadataSchema = z.object({
 
 export type BeadForm = z.infer<typeof BeadFormSchema>;
 export type BeadFormResponse = z.infer<typeof BeadFormResponseSchema>;
+export type FormLiveValues = Record<string, unknown>;
 
 const ALLOWED_TAGS = new Set([
   'a', 'abbr', 'blockquote', 'br', 'button', 'caption', 'code', 'col', 'colgroup',
@@ -150,6 +151,42 @@ function sanitizeElement(element: Element): void {
   }
 }
 
+const CONTROL_SELECTOR = 'input, select, textarea';
+
+function controlIdentifier(element: Element): string | null {
+  const id = element.getAttribute('id')?.trim();
+  if (id) return id;
+  const name = element.getAttribute('name')?.trim();
+  if (name) return name;
+  return null;
+}
+
+function validateControlIdentifiers(root: ParentNode): string[] {
+  const errors: string[] = [];
+  const seen = new Map<string, string>();
+
+  for (const element of Array.from(root.querySelectorAll(CONTROL_SELECTOR))) {
+    const tagName = element.tagName.toLowerCase();
+    const type = element.getAttribute('type')?.toLowerCase();
+    if (tagName === 'input' && type === 'submit') continue;
+
+    const identifier = controlIdentifier(element);
+    if (!identifier) {
+      errors.push(`${tagName} controls must have a unique id or name`);
+      continue;
+    }
+
+    const previous = seen.get(identifier);
+    if (previous) {
+      errors.push(`Duplicate form control identifier "${identifier}" on ${previous} and ${tagName}`);
+      continue;
+    }
+    seen.set(identifier, tagName);
+  }
+
+  return errors;
+}
+
 function sanitizeNode(node: Node): void {
   for (const child of Array.from(node.childNodes)) {
     if (child.nodeType === Node.ELEMENT_NODE) {
@@ -171,6 +208,46 @@ export function sanitizeFormHtml(html: string): string {
   if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return '';
   const document = new DOMParser().parseFromString(html, 'text/html');
   sanitizeNode(document.body);
+  return document.body.innerHTML;
+}
+
+export function getFormIdentifierErrors(html: string): string[] {
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return [];
+  const document = new DOMParser().parseFromString(sanitizeFormHtml(html), 'text/html');
+  return validateControlIdentifiers(document.body);
+}
+
+export function getFormLiveValues(form: BeadForm): FormLiveValues {
+  return isObject((form as JsonObject).liveValues)
+    ? { ...((form as JsonObject).liveValues as JsonObject) }
+    : {};
+}
+
+export function applyFormLiveValues(html: string, liveValues: FormLiveValues): string {
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return '';
+  const document = new DOMParser().parseFromString(html, 'text/html');
+
+  for (const element of Array.from(document.body.querySelectorAll(CONTROL_SELECTOR))) {
+    const identifier = controlIdentifier(element);
+    if (!identifier || !(identifier in liveValues)) continue;
+
+    if (element instanceof HTMLInputElement && element.type.toLowerCase() === 'checkbox') {
+      if (liveValues[identifier] === true) element.setAttribute('checked', '');
+      else element.removeAttribute('checked');
+    } else if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+      const value = liveValues[identifier];
+      if (typeof value === 'string' || typeof value === 'number') {
+        element.setAttribute('value', String(value));
+      }
+    } else if (element instanceof HTMLSelectElement) {
+      const value = liveValues[identifier];
+      for (const option of Array.from(element.options)) {
+        if (option.value === String(value)) option.setAttribute('selected', '');
+        else option.removeAttribute('selected');
+      }
+    }
+  }
+
   return document.body.innerHTML;
 }
 
@@ -198,6 +275,50 @@ export function formDataToValues(formData: FormData): Record<string, unknown> {
     }
   }
   return values;
+}
+
+export function formElementToValues(form: HTMLFormElement): Record<string, unknown> {
+  const values = formDataToValues(new FormData(form));
+
+  for (const element of Array.from(form.elements)) {
+    if (!(element instanceof HTMLInputElement)) continue;
+    if (element.type.toLowerCase() !== 'checkbox') continue;
+    const identifier = element.id.trim() || element.name.trim();
+    if (!identifier || identifier.startsWith('__beadsWeb_')) continue;
+    values[identifier] = element.checked;
+  }
+
+  return values;
+}
+
+export function setFormLiveValue(
+  metadata: unknown,
+  formId: string,
+  identifier: string,
+  value: unknown,
+): JsonObject {
+  return setFormLiveValues(metadata, formId, { [identifier]: value });
+}
+
+export function setFormLiveValues(
+  metadata: unknown,
+  formId: string,
+  liveValues: FormLiveValues,
+): JsonObject {
+  const next: JsonObject = isObject(metadata) ? structuredClone(metadata) as JsonObject : {};
+  if (!isObject(next.beadsWeb)) next.beadsWeb = {};
+  const beadsWeb = next.beadsWeb as JsonObject;
+  if (!Array.isArray(beadsWeb.forms)) beadsWeb.forms = [];
+
+  const forms = beadsWeb.forms as unknown[];
+  const form = forms.find((candidate: unknown) => isObject(candidate) && candidate.id === formId);
+  if (!isObject(form)) {
+    throw new Error(`Form not found: ${formId}`);
+  }
+
+  if (!isObject(form.liveValues)) form.liveValues = {};
+  Object.assign(form.liveValues as JsonObject, liveValues);
+  return next;
 }
 
 export function mergeFormResponse(

@@ -124,6 +124,7 @@ export interface Bead {
   issue_type: string;
   owner: string;
   assignee?: string;
+  labels?: string[];
   metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;

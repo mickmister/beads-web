@@ -141,6 +141,8 @@ pub struct Bead {
     #[serde(default)]
     pub assignee: Option<String>,
     #[serde(default)]
+    pub labels: Option<Vec<String>>,
+    #[serde(default)]
     pub metadata: Option<serde_json::Value>,
     #[serde(default)]
     pub created_at: Option<String>,
@@ -993,6 +995,10 @@ async fn update_metadata_with_cli(project_path: &Path, bead_id: &str, metadata: 
     }
 }
 
+async fn add_label_with_cli(project_path: &Path, bead_id: &str, label: &str) -> Result<(), String> {
+    run_bd(&["tag", bead_id, label], project_path).await.map(|_| ())
+}
+
 async fn call_form_webhook(
     req: &SubmitBeadFormRequest,
     submitted_at: &str,
@@ -1115,6 +1121,13 @@ pub async fn submit_bead_form_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": e })),
             ).into_response();
+        }
+    }
+
+    if !req.path.starts_with(DOLT_PATH_PREFIX) {
+        let project_path = PathBuf::from(&req.path);
+        if let Err(e) = add_label_with_cli(&project_path, &req.id, "needs-agent-review").await {
+            tracing::warn!("Failed to add needs-agent-review label after form submit: {}", e);
         }
     }
 
@@ -1787,6 +1800,7 @@ mod tests {
             issue_type: None,
             owner: None,
             assignee: None,
+            labels: None,
             metadata: None,
             created_at: None,
             created_by: None,

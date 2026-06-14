@@ -457,6 +457,7 @@ async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec
         issue_type: get_opt_str(row, "issue_type"),
         owner: get_opt_str(row, "owner"),
         assignee: get_opt_str(row, "assignee"),
+        labels: None,
         metadata: get_json(row, "metadata"),
         created_at: get_opt_str(row, "created_at"),
         created_by: get_opt_str(row, "created_by"),

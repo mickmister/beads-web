@@ -4,8 +4,11 @@ import type { Bead } from '@/types';
 
 import {
   formDataToValues,
+  formElementToValues,
+  getFormIdentifierErrors,
   getBeadForms,
   mergeFormResponse,
+  setFormLiveValue,
   sanitizeFormHtml,
 } from '../bead-forms';
 
@@ -96,6 +99,44 @@ describe('bead HTML forms', () => {
       comment: 'LGTM',
       labels: ['one', 'two'],
     });
+  });
+
+  it('requires stable unique identifiers for form controls', () => {
+    expect(getFormIdentifierErrors('<form><input><textarea name="comment"></textarea></form>')).toContain(
+      'input controls must have a unique id or name',
+    );
+    expect(getFormIdentifierErrors('<form><input name="same"><textarea name="same"></textarea></form>')).toContain(
+      'Duplicate form control identifier "same" on input and textarea',
+    );
+    expect(getFormIdentifierErrors('<form><input id="first" name="same"><input id="second" name="same"></form>')).toEqual([]);
+  });
+
+  it('uses unique identifiers when collecting checkbox values', () => {
+    document.body.innerHTML = '<form><input id="reviewed" type="checkbox" checked><input name="comment" value="done"></form>';
+    const form = document.querySelector('form')!;
+
+    expect(formElementToValues(form)).toEqual({
+      reviewed: true,
+      comment: 'done',
+    });
+  });
+
+  it('stores live control values in form metadata', () => {
+    const metadata = {
+      beadsWeb: {
+        forms: [
+          {
+            id: 'review',
+            title: 'Review',
+            html: '<form><input id="reviewed" type="checkbox"></form>',
+          },
+        ],
+      },
+    };
+
+    const next = setFormLiveValue(metadata, 'review', 'reviewed', true);
+
+    expect((next as any).beadsWeb.forms[0].liveValues).toEqual({ reviewed: true });
   });
 
   it('appends response history while preserving unrelated metadata', () => {
