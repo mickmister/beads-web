@@ -5,6 +5,7 @@ import type { Bead } from '@/types';
 import {
   formDataToValues,
   formElementToValues,
+  getFormControlManifestErrors,
   getFormIdentifierErrors,
   getBeadForms,
   mergeFormResponse,
@@ -36,6 +37,7 @@ describe('bead HTML forms', () => {
               id: 'review',
               title: 'Review',
               html: '<form><label>Comment<textarea name="comment" required></textarea></label><button>Submit</button></form>',
+              controls: [{ id: 'comment', name: 'comment', type: 'textarea', required: true }],
             },
           ],
         },
@@ -111,11 +113,36 @@ describe('bead HTML forms', () => {
     expect(getFormIdentifierErrors('<form><input id="first" name="same"><input id="second" name="same"></form>')).toEqual([]);
   });
 
+  it('validates controls manifests against HTML controls', () => {
+    expect(getFormControlManifestErrors({
+      id: 'review',
+      title: 'Review',
+      html: '<form><textarea id="comment" name="comment"></textarea></form>',
+      controls: [{ id: 'comment', name: 'comment', type: 'textarea' }],
+    })).toEqual([]);
+
+    expect(getFormControlManifestErrors({
+      id: 'review',
+      title: 'Review',
+      html: '<form><textarea id="comment" name="comment"></textarea></form>',
+    })).toContain('Form metadata must declare controls[] for server-side validation');
+
+    expect(getFormControlManifestErrors({
+      id: 'review',
+      title: 'Review',
+      html: '<form><input id="ack" name="ack" type="checkbox"></form>',
+      controls: [{ id: 'ack', name: 'ack', type: 'text' }],
+    })).toContain('Control "ack" type mismatch: HTML is "checkbox" but controls[] says "text"');
+  });
+
   it('uses unique identifiers when collecting checkbox values', () => {
-    document.body.innerHTML = '<form><input id="reviewed" type="checkbox" checked><input name="comment" value="done"></form>';
+    document.body.innerHTML = '<form><input id="reviewed" name="reviewed" type="checkbox" checked><input id="comment" name="comment" value="done"></form>';
     const form = document.querySelector('form')!;
 
-    expect(formElementToValues(form)).toEqual({
+    expect(formElementToValues(form, [
+      { id: 'reviewed', name: 'reviewed', type: 'checkbox' },
+      { id: 'comment', name: 'comment', type: 'text' },
+    ])).toEqual({
       reviewed: true,
       comment: 'done',
     });
@@ -125,11 +152,12 @@ describe('bead HTML forms', () => {
     const metadata = {
       beadsWeb: {
         forms: [
-          {
-            id: 'review',
-            title: 'Review',
-            html: '<form><input id="reviewed" type="checkbox"></form>',
-          },
+            {
+              id: 'review',
+              title: 'Review',
+              html: '<form><input id="reviewed" type="checkbox"></form>',
+              controls: [{ id: 'reviewed', name: 'reviewed', type: 'checkbox', live: true }],
+            },
         ],
       },
     };
@@ -148,6 +176,7 @@ describe('bead HTML forms', () => {
             id: 'review',
             title: 'Review',
             html: '<form><textarea name="comment"></textarea></form>',
+            controls: [{ id: 'comment', name: 'comment', type: 'textarea' }],
             responses: [{ submittedBy: 'user', submittedAt: 'old', values: { comment: 'old' } }],
           },
         ],

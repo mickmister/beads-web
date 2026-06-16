@@ -41,8 +41,7 @@ pub struct DoltManager {
 impl DoltManager {
     /// Creates a new DoltManager with a connection pool to Dolt.
     pub fn new() -> Self {
-        let pool_opts = PoolOpts::default()
-            .with_constraints(PoolConstraints::new(0, 4).unwrap());
+        let pool_opts = PoolOpts::default().with_constraints(PoolConstraints::new(0, 4).unwrap());
 
         let opts: Opts = OptsBuilder::default()
             .ip_or_hostname(DOLT_HOST)
@@ -72,19 +71,22 @@ impl DoltManager {
     /// Discovers all beads databases via `SHOW DATABASES`.
     /// Returns database names that start with `beads_`.
     pub async fn discover_databases(&self) -> Result<Vec<DoltDatabase>, DoltError> {
-        let mut conn = self.pool.get_conn().await
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
             .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
 
-        let rows: Vec<Row> = conn.query("SHOW DATABASES").await
+        let rows: Vec<Row> = conn
+            .query("SHOW DATABASES")
+            .await
             .map_err(|e| DoltError::QueryFailed(e.to_string()))?;
 
         let mut databases = Vec::new();
         for row in rows {
             let name: String = row.get(0).unwrap_or_default();
             if name.starts_with("beads_") {
-                let project_name = name.strip_prefix("beads_")
-                    .unwrap_or(&name)
-                    .to_string();
+                let project_name = name.strip_prefix("beads_").unwrap_or(&name).to_string();
                 databases.push(DoltDatabase { name, project_name });
             }
         }
@@ -95,7 +97,10 @@ impl DoltManager {
 
     /// Reads beads (issues + comments + dependencies) from a specific Dolt database.
     pub async fn read_beads(&self, db_name: &str) -> Result<Vec<Bead>, DoltError> {
-        let mut conn = self.pool.get_conn().await
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
             .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
         let beads = read_beads_from_conn(&mut conn, db_name).await?;
         self.available.store(true, Ordering::Relaxed);
@@ -114,7 +119,10 @@ impl DoltManager {
         priority: i32,
         parent_id: Option<&str>,
     ) -> Result<(), DoltError> {
-        let mut conn = self.pool.get_conn().await
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
             .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
 
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -128,20 +136,37 @@ impl DoltManager {
              AND COLUMN_NAME NOT IN ('id', 'title', 'description', 'status', 'priority', \
              'issue_type', 'owner', 'created_at', 'updated_at')"
         );
-        let extra_cols: Vec<String> = conn.exec_map(
-            &schema_query,
-            mysql_async::params! { "db" => db_name },
-            |col_name: String| col_name,
-        ).await.unwrap_or_default();
+        let extra_cols: Vec<String> = conn
+            .exec_map(
+                &schema_query,
+                mysql_async::params! { "db" => db_name },
+                |col_name: String| col_name,
+            )
+            .await
+            .unwrap_or_default();
 
         // Build INSERT with all required columns
         let mut columns = vec![
-            "id", "title", "description", "status", "priority",
-            "issue_type", "owner", "created_at", "updated_at",
+            "id",
+            "title",
+            "description",
+            "status",
+            "priority",
+            "issue_type",
+            "owner",
+            "created_at",
+            "updated_at",
         ];
         let mut values = vec![
-            ":id", ":title", ":desc", "'open'", ":priority",
-            ":type", "'web-ui'", ":now", ":now",
+            ":id",
+            ":title",
+            ":desc",
+            "'open'",
+            ":priority",
+            ":type",
+            "'web-ui'",
+            ":now",
+            ":now",
         ];
 
         // Add empty string for any extra NOT NULL columns
@@ -153,7 +178,11 @@ impl DoltManager {
         let query = format!(
             "INSERT INTO `{}`.issues ({}) VALUES ({})",
             db_name,
-            columns.iter().map(|c| format!("`{}`", c)).collect::<Vec<_>>().join(", "),
+            columns
+                .iter()
+                .map(|c| format!("`{}`", c))
+                .collect::<Vec<_>>()
+                .join(", "),
             values.join(", "),
         );
         conn.exec_drop(
@@ -166,7 +195,9 @@ impl DoltManager {
                 "type" => issue_type,
                 "now" => &now,
             },
-        ).await.map_err(|e| DoltError::QueryFailed(format!("insert: {}", e)))?;
+        )
+        .await
+        .map_err(|e| DoltError::QueryFailed(format!("insert: {}", e)))?;
 
         // Insert parent-child dependency if parent specified
         if let Some(parent) = parent_id {
@@ -177,17 +208,19 @@ impl DoltManager {
             conn.exec_drop(
                 &dep_query,
                 mysql_async::params! { "child" => id, "parent" => parent },
-            ).await.map_err(|e| DoltError::QueryFailed(format!("dependency: {}", e)))?;
+            )
+            .await
+            .map_err(|e| DoltError::QueryFailed(format!("dependency: {}", e)))?;
         }
 
         // Dolt commit — must USE the database first
         let use_query = format!("USE `{}`", db_name);
-        conn.query_drop(&use_query).await
+        conn.query_drop(&use_query)
+            .await
             .map_err(|e| DoltError::QueryFailed(format!("use_db: {}", e)))?;
-        let commit_query = format!(
-            "CALL DOLT_COMMIT('-Am', 'web-ui: create {}')", id
-        );
-        conn.query_drop(&commit_query).await
+        let commit_query = format!("CALL DOLT_COMMIT('-Am', 'web-ui: create {}')", id);
+        conn.query_drop(&commit_query)
+            .await
             .map_err(|e| DoltError::QueryFailed(format!("dolt_commit: {}", e)))?;
 
         info!("Created bead {} in Dolt (db: {})", id, db_name);
@@ -228,7 +261,10 @@ impl DoltManager {
         params.push((b"now".to_vec(), now.into()));
         params.push((b"id".to_vec(), id.into()));
 
-        let mut conn = self.pool.get_conn().await
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
             .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
 
         let query = format!(
@@ -236,18 +272,21 @@ impl DoltManager {
             db_name,
             sets.join(", ")
         );
-        conn.exec_drop(&query, mysql_async::Params::Named(params.into_iter().collect()))
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("update: {}", e)))?;
+        conn.exec_drop(
+            &query,
+            mysql_async::Params::Named(params.into_iter().collect()),
+        )
+        .await
+        .map_err(|e| DoltError::QueryFailed(format!("update: {}", e)))?;
 
         // Dolt commit — must USE the database first
         let use_query = format!("USE `{}`", db_name);
-        conn.query_drop(&use_query).await
+        conn.query_drop(&use_query)
+            .await
             .map_err(|e| DoltError::QueryFailed(format!("use_db: {}", e)))?;
-        let commit_query = format!(
-            "CALL DOLT_COMMIT('-Am', 'web-ui: update {}')", id
-        );
-        conn.query_drop(&commit_query).await
+        let commit_query = format!("CALL DOLT_COMMIT('-Am', 'web-ui: update {}')", id);
+        conn.query_drop(&commit_query)
+            .await
             .map_err(|e| DoltError::QueryFailed(format!("dolt_commit: {}", e)))?;
 
         info!("Updated bead {} in Dolt (db: {})", id, db_name);
@@ -262,7 +301,10 @@ impl DoltManager {
         metadata_json: &str,
     ) -> Result<(), DoltError> {
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let mut conn = self.pool.get_conn().await
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
             .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
 
         let query = format!(
@@ -276,28 +318,43 @@ impl DoltManager {
                 "now" => &now,
                 "id" => id,
             },
-        ).await.map_err(|e| DoltError::QueryFailed(format!("metadata update: {}", e)))?;
+        )
+        .await
+        .map_err(|e| DoltError::QueryFailed(format!("metadata update: {}", e)))?;
 
         let use_query = format!("USE `{}`", db_name);
-        conn.query_drop(&use_query).await
+        conn.query_drop(&use_query)
+            .await
             .map_err(|e| DoltError::QueryFailed(format!("use_db: {}", e)))?;
-        let commit_query = format!(
-            "CALL DOLT_COMMIT('-Am', 'web-ui: update metadata {}')", id
-        );
-        conn.query_drop(&commit_query).await
+        let commit_query = format!("CALL DOLT_COMMIT('-Am', 'web-ui: update metadata {}')", id);
+        conn.query_drop(&commit_query)
+            .await
             .map_err(|e| DoltError::QueryFailed(format!("dolt_commit: {}", e)))?;
 
         info!("Updated bead metadata {} in Dolt (db: {})", id, db_name);
         Ok(())
     }
 
+    /// Adds a label to a bead's labels column in a Dolt database and commits the change.
+    pub async fn add_bead_label(
+        &self,
+        db_name: &str,
+        id: &str,
+        label: &str,
+    ) -> Result<(), DoltError> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        add_bead_label_with_conn(&mut conn, db_name, id, label).await
+    }
 }
 
 /// Reads beads from a Dolt server on a specific port.
 /// Creates a temporary connection pool to the given port, reads data, then drops it.
 pub async fn read_beads_on_port(port: u16, db_name: &str) -> Result<Vec<Bead>, DoltError> {
-    let pool_opts = PoolOpts::default()
-        .with_constraints(PoolConstraints::new(0, 2).unwrap());
+    let pool_opts = PoolOpts::default().with_constraints(PoolConstraints::new(0, 2).unwrap());
 
     let opts: Opts = OptsBuilder::default()
         .ip_or_hostname(DOLT_HOST)
@@ -307,7 +364,9 @@ pub async fn read_beads_on_port(port: u16, db_name: &str) -> Result<Vec<Bead>, D
         .into();
 
     let pool = Pool::new(opts);
-    let mut conn = pool.get_conn().await
+    let mut conn = pool
+        .get_conn()
+        .await
         .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
 
     let result = read_beads_from_conn(&mut conn, db_name).await;
@@ -318,15 +377,19 @@ pub async fn read_beads_on_port(port: u16, db_name: &str) -> Result<Vec<Bead>, D
     }
 
     let beads = result?;
-    info!("Read {} beads from per-project Dolt SQL (port: {}, db: {})", beads.len(), port, db_name);
+    info!(
+        "Read {} beads from per-project Dolt SQL (port: {}, db: {})",
+        beads.len(),
+        port,
+        db_name
+    );
     Ok(beads)
 }
 
 /// Discover the beads database name by connecting to a Dolt server and looking
 /// for a database that has an `issues` table.
 pub async fn discover_database_on_port(port: u16) -> Result<String, DoltError> {
-    let pool_opts = PoolOpts::default()
-        .with_constraints(PoolConstraints::new(0, 2).unwrap());
+    let pool_opts = PoolOpts::default().with_constraints(PoolConstraints::new(0, 2).unwrap());
 
     let opts: Opts = OptsBuilder::default()
         .ip_or_hostname(DOLT_HOST)
@@ -336,11 +399,15 @@ pub async fn discover_database_on_port(port: u16) -> Result<String, DoltError> {
         .into();
 
     let pool = Pool::new(opts);
-    let mut conn = pool.get_conn().await
+    let mut conn = pool
+        .get_conn()
+        .await
         .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
 
     // Get all databases, excluding system ones
-    let rows: Vec<Row> = conn.query("SHOW DATABASES").await
+    let rows: Vec<Row> = conn
+        .query("SHOW DATABASES")
+        .await
         .map_err(|e| DoltError::QueryFailed(e.to_string()))?;
 
     let system_dbs = ["information_schema", "mysql", "dolt_cluster"];
@@ -386,10 +453,13 @@ async fn read_beads_from_conn(
     db_name: &str,
 ) -> Result<Vec<Bead>, DoltError> {
     // Check database exists
-    let db_exists: Option<Row> = conn.exec_first(
-        "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = :db",
-        mysql_async::params! { "db" => db_name },
-    ).await.map_err(|e| DoltError::QueryFailed(e.to_string()))?;
+    let db_exists: Option<Row> = conn
+        .exec_first(
+            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = :db",
+            mysql_async::params! { "db" => db_name },
+        )
+        .await
+        .map_err(|e| DoltError::QueryFailed(e.to_string()))?;
 
     if db_exists.is_none() {
         return Err(DoltError::DatabaseNotFound(db_name.to_string()));
@@ -411,7 +481,12 @@ fn get_str(row: &Row, col: &str) -> String {
 }
 
 /// Queries issues from a Dolt database.
-async fn column_exists(conn: &mut mysql_async::Conn, db_name: &str, table: &str, column: &str) -> Result<bool, DoltError> {
+async fn column_exists(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+    table: &str,
+    column: &str,
+) -> Result<bool, DoltError> {
     let exists: Option<u8> = conn.exec_first(
         "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :table AND COLUMN_NAME = :column LIMIT 1",
         mysql_async::params! { "db" => db_name, "table" => table, "column" => column },
@@ -425,49 +500,138 @@ fn get_json(row: &Row, col: &str) -> Option<serde_json::Value> {
     serde_json::from_str(&raw).ok()
 }
 
+fn get_string_vec_json(row: &Row, col: &str) -> Option<Vec<String>> {
+    let raw = row.get::<Option<String>, _>(col).flatten()?;
+    serde_json::from_str::<Vec<String>>(&raw).ok()
+}
+
 /// Queries issues from a Dolt database.
 async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec<Bead>, DoltError> {
     let has_assignee = column_exists(conn, db_name, "issues", "assignee").await?;
     let has_metadata = column_exists(conn, db_name, "issues", "metadata").await?;
-    let assignee_select = if has_assignee { "assignee" } else { "NULL AS assignee" };
-    let metadata_select = if has_metadata { "metadata" } else { "NULL AS metadata" };
+    let has_labels = column_exists(conn, db_name, "issues", "labels").await?;
+    let assignee_select = if has_assignee {
+        "assignee"
+    } else {
+        "NULL AS assignee"
+    };
+    let metadata_select = if has_metadata {
+        "metadata"
+    } else {
+        "NULL AS metadata"
+    };
+    let labels_select = if has_labels {
+        "labels"
+    } else {
+        "NULL AS labels"
+    };
 
     let query = format!(
         "SELECT id, title, description, `design`, status, priority, issue_type, \
-         owner, {}, {}, \
+         owner, {}, {}, {}, \
          DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at, \
          created_by, \
          DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at, \
          DATE_FORMAT(closed_at, '%Y-%m-%dT%H:%i:%sZ') AS closed_at, \
          close_reason \
          FROM `{}`.issues",
-        assignee_select,
-        metadata_select,
-        db_name
+        assignee_select, metadata_select, labels_select, db_name
     );
-    let rows: Vec<Row> = conn.query(&query).await
+    let rows: Vec<Row> = conn
+        .query(&query)
+        .await
         .map_err(|e| DoltError::QueryFailed(format!("issues: {}", e)))?;
 
-    Ok(rows.iter().map(|row| Bead {
-        id: get_str(row, "id"),
-        title: get_str(row, "title"),
-        description: get_opt_str(row, "description"),
-        status: get_opt_str(row, "status").unwrap_or_else(|| "open".to_string()),
-        priority: row.get::<Option<i32>, _>("priority").flatten(),
-        issue_type: get_opt_str(row, "issue_type"),
-        owner: get_opt_str(row, "owner"),
-        assignee: get_opt_str(row, "assignee"),
-        labels: None,
-        metadata: get_json(row, "metadata"),
-        created_at: get_opt_str(row, "created_at"),
-        created_by: get_opt_str(row, "created_by"),
-        updated_at: get_opt_str(row, "updated_at"),
-        closed_at: get_opt_str(row, "closed_at"),
-        close_reason: get_opt_str(row, "close_reason"),
-        design_doc: get_opt_str(row, "design"),
-        parent_id: None, children: None, deps: None,
-        relates_to: None, comments: None, dependencies: None,
-    }).collect())
+    Ok(rows
+        .iter()
+        .map(|row| Bead {
+            id: get_str(row, "id"),
+            title: get_str(row, "title"),
+            description: get_opt_str(row, "description"),
+            status: get_opt_str(row, "status").unwrap_or_else(|| "open".to_string()),
+            priority: row.get::<Option<i32>, _>("priority").flatten(),
+            issue_type: get_opt_str(row, "issue_type"),
+            owner: get_opt_str(row, "owner"),
+            assignee: get_opt_str(row, "assignee"),
+            labels: get_string_vec_json(row, "labels"),
+            metadata: get_json(row, "metadata"),
+            created_at: get_opt_str(row, "created_at"),
+            created_by: get_opt_str(row, "created_by"),
+            updated_at: get_opt_str(row, "updated_at"),
+            closed_at: get_opt_str(row, "closed_at"),
+            close_reason: get_opt_str(row, "close_reason"),
+            design_doc: get_opt_str(row, "design"),
+            parent_id: None,
+            children: None,
+            deps: None,
+            relates_to: None,
+            comments: None,
+            dependencies: None,
+        })
+        .collect())
+}
+
+async fn add_bead_label_with_conn(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+    id: &str,
+    label: &str,
+) -> Result<(), DoltError> {
+    if !column_exists(conn, db_name, "issues", "labels").await? {
+        return Err(DoltError::QueryFailed(
+            "issues.labels column does not exist".to_string(),
+        ));
+    }
+
+    let query = format!("SELECT labels FROM `{}`.issues WHERE id = :id", db_name);
+    let raw: Option<String> = conn
+        .exec_first(&query, mysql_async::params! { "id" => id })
+        .await
+        .map_err(|e| DoltError::QueryFailed(format!("select labels: {}", e)))?
+        .flatten();
+    let mut labels = raw
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+        .unwrap_or_default();
+    if !labels.iter().any(|existing| existing == label) {
+        labels.push(label.to_string());
+    }
+    let labels_json = serde_json::to_string(&labels)
+        .map_err(|e| DoltError::QueryFailed(format!("serialize labels: {}", e)))?;
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let update = format!(
+        "UPDATE `{}`.issues SET labels = :labels, updated_at = :now WHERE id = :id",
+        db_name
+    );
+    conn.exec_drop(
+        &update,
+        mysql_async::params! {
+            "labels" => labels_json,
+            "now" => &now,
+            "id" => id,
+        },
+    )
+    .await
+    .map_err(|e| DoltError::QueryFailed(format!("update labels: {}", e)))?;
+
+    let use_query = format!("USE `{}`", db_name);
+    conn.query_drop(&use_query)
+        .await
+        .map_err(|e| DoltError::QueryFailed(format!("use_db: {}", e)))?;
+    let commit_query = format!(
+        "CALL DOLT_COMMIT('-Am', 'web-ui: label {} {}')",
+        id.replace('\'', ""),
+        label.replace('\'', "")
+    );
+    conn.query_drop(&commit_query)
+        .await
+        .map_err(|e| DoltError::QueryFailed(format!("dolt_commit: {}", e)))?;
+
+    info!(
+        "Added label {} to bead {} in Dolt (db: {})",
+        label, id, db_name
+    );
+    Ok(())
 }
 
 /// Queries comments and merges them into beads.
@@ -482,7 +646,9 @@ async fn merge_comments(
          FROM `{}`.comments ORDER BY issue_id, id",
         db_name
     );
-    let rows: Vec<Row> = conn.query(&query).await
+    let rows: Vec<Row> = conn
+        .query(&query)
+        .await
         .map_err(|e| DoltError::QueryFailed(format!("comments: {}", e)))?;
 
     let mut map: HashMap<String, Vec<Comment>> = HashMap::new();
@@ -514,7 +680,9 @@ async fn merge_dependencies(
         "SELECT issue_id, depends_on_id, `type` FROM `{}`.dependencies",
         db_name
     );
-    let rows: Vec<Row> = conn.query(&query).await
+    let rows: Vec<Row> = conn
+        .query(&query)
+        .await
         .map_err(|e| DoltError::QueryFailed(format!("dependencies: {}", e)))?;
 
     let mut parent_map: HashMap<String, String> = HashMap::new();
@@ -525,16 +693,28 @@ async fn merge_dependencies(
         let issue_id = get_str(row, "issue_id");
         let depends_on = get_str(row, "depends_on_id");
         match get_str(row, "type").as_str() {
-            "parent-child" | "parent" => { parent_map.insert(issue_id, depends_on); }
-            "relates-to" | "related" => { related_map.entry(issue_id).or_default().push(depends_on); }
-            _ => { blocking_map.entry(issue_id).or_default().push(depends_on); }
+            "parent-child" | "parent" => {
+                parent_map.insert(issue_id, depends_on);
+            }
+            "relates-to" | "related" => {
+                related_map.entry(issue_id).or_default().push(depends_on);
+            }
+            _ => {
+                blocking_map.entry(issue_id).or_default().push(depends_on);
+            }
         }
     }
 
     for bead in beads.iter_mut() {
-        if let Some(pid) = parent_map.remove(&bead.id) { bead.parent_id = Some(pid); }
-        if let Some(b) = blocking_map.remove(&bead.id) { bead.deps = Some(b); }
-        if let Some(r) = related_map.remove(&bead.id) { bead.relates_to = Some(r); }
+        if let Some(pid) = parent_map.remove(&bead.id) {
+            bead.parent_id = Some(pid);
+        }
+        if let Some(b) = blocking_map.remove(&bead.id) {
+            bead.deps = Some(b);
+        }
+        if let Some(r) = related_map.remove(&bead.id) {
+            bead.relates_to = Some(r);
+        }
     }
     Ok(())
 }
@@ -599,7 +779,8 @@ pub fn database_name_for_project(project_path: &Path) -> Option<String> {
     }
 
     // Last resort: derive from directory name
-    project_path.file_name()
+    project_path
+        .file_name()
         .and_then(|n| n.to_str())
         .map(|name| format!("beads_{}", name))
 }
@@ -709,11 +890,7 @@ mod tests {
         let project = tmp.path().join("fallback-dir");
         let beads_dir = project.join(".beads");
         std::fs::create_dir_all(&beads_dir).unwrap();
-        std::fs::write(
-            beads_dir.join("config.yaml"),
-            "issue-prefix: \"\"\n",
-        )
-        .unwrap();
+        std::fs::write(beads_dir.join("config.yaml"), "issue-prefix: \"\"\n").unwrap();
 
         assert_eq!(
             database_name_for_project(&project),

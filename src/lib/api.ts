@@ -180,6 +180,12 @@ export const beads = {
       body: JSON.stringify(data),
     }),
 
+  updateFormLiveValue: (data: { path: string; id: string; formId: string; controlId: string; value: unknown }) =>
+    fetchApi<{ success: boolean }>('/api/beads/forms/live-value', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   submitForm: (data: { path: string; id: string; formId: string; values: Record<string, unknown> }) =>
     fetchApi<{ success: boolean; webhookMarkdown?: string }>('/api/beads/forms/submit', {
       method: 'POST',

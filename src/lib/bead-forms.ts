@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { z } from 'zod/v4';
 
 import type { Bead } from '@/types';
@@ -11,12 +12,41 @@ export const BeadFormResponseSchema = z.object({
   webhookMarkdown: z.string().optional(),
 });
 
+export const BeadFormControlSchema = z.object({
+  id: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
+  name: z.string().min(1).optional(),
+  type: z.enum([
+    'checkbox',
+    'date',
+    'datetime-local',
+    'email',
+    'hidden',
+    'month',
+    'number',
+    'password',
+    'radio',
+    'range',
+    'search',
+    'select',
+    'tel',
+    'text',
+    'textarea',
+    'time',
+    'url',
+    'week',
+  ]),
+  required: z.boolean().optional(),
+  live: z.boolean().optional(),
+  multiple: z.boolean().optional(),
+}).passthrough();
+
 export const BeadFormSchema = z.object({
   id: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
   title: z.string().min(1),
   description: z.string().optional(),
   version: z.number().int().positive().optional(),
   html: z.string().min(1),
+  controls: z.array(BeadFormControlSchema).optional(),
   responses: z.array(BeadFormResponseSchema).optional(),
 }).passthrough();
 
@@ -25,6 +55,7 @@ export const BeadsWebMetadataSchema = z.object({
 }).passthrough();
 
 export type BeadForm = z.infer<typeof BeadFormSchema>;
+export type BeadFormControl = z.infer<typeof BeadFormControlSchema>;
 export type BeadFormResponse = z.infer<typeof BeadFormResponseSchema>;
 export type FormLiveValues = Record<string, unknown>;
 
@@ -61,6 +92,11 @@ const TAG_ATTRS: Record<string, Set<string>> = {
   td: new Set(['colspan', 'headers', 'rowspan']),
   th: new Set(['colspan', 'headers', 'rowspan', 'scope']),
 };
+
+const ALLOWED_ATTRS = Array.from(new Set([
+  ...Array.from(GLOBAL_ATTRS),
+  ...Object.values(TAG_ATTRS).flatMap((attrs) => Array.from(attrs)),
+]));
 
 const SAFE_INPUT_TYPES = new Set([
   'checkbox', 'date', 'datetime-local', 'email', 'hidden', 'month', 'number', 'password',
@@ -105,7 +141,7 @@ function sanitizeStyle(value: string): string {
     .join('; ');
 }
 
-function sanitizeElement(element: Element): void {
+function hardenSanitizedElement(element: Element): void {
   const tagName = element.tagName.toLowerCase();
 
   for (const attr of Array.from(element.attributes)) {
@@ -187,27 +223,22 @@ function validateControlIdentifiers(root: ParentNode): string[] {
   return errors;
 }
 
-function sanitizeNode(node: Node): void {
-  for (const child of Array.from(node.childNodes)) {
-    if (child.nodeType === Node.ELEMENT_NODE) {
-      const element = child as Element;
-      const tagName = element.tagName.toLowerCase();
-      if (!ALLOWED_TAGS.has(tagName)) {
-        element.replaceWith(...Array.from(element.childNodes));
-        continue;
-      }
-      sanitizeElement(element);
-      sanitizeNode(element);
-    } else if (child.nodeType !== Node.TEXT_NODE) {
-      child.remove();
-    }
+function hardenSanitizedTree(root: ParentNode): void {
+  for (const element of Array.from(root.querySelectorAll('*'))) {
+    hardenSanitizedElement(element);
   }
 }
 
 export function sanitizeFormHtml(html: string): string {
   if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return '';
-  const document = new DOMParser().parseFromString(html, 'text/html');
-  sanitizeNode(document.body);
+  const sanitized = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: Array.from(ALLOWED_TAGS),
+    ALLOWED_ATTR: ALLOWED_ATTRS,
+    ALLOW_DATA_ATTR: false,
+    FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'img', 'audio', 'video', 'source'],
+  });
+  const document = new DOMParser().parseFromString(sanitized, 'text/html');
+  hardenSanitizedTree(document.body);
   return document.body.innerHTML;
 }
 
@@ -215,6 +246,74 @@ export function getFormIdentifierErrors(html: string): string[] {
   if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return [];
   const document = new DOMParser().parseFromString(sanitizeFormHtml(html), 'text/html');
   return validateControlIdentifiers(document.body);
+}
+
+function htmlControlType(element: Element): BeadFormControl['type'] | null {
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === 'textarea') return 'textarea';
+  if (tagName === 'select') return 'select';
+  if (tagName !== 'input') return null;
+  const type = element.getAttribute('type')?.toLowerCase() || 'text';
+  if (SAFE_INPUT_TYPES.has(type)) return type as BeadFormControl['type'];
+  return 'text';
+}
+
+export function getFormControlManifestErrors(form: BeadForm): string[] {
+  const errors: string[] = [];
+  const controls = form.controls ?? [];
+  if (controls.length === 0) {
+    errors.push('Form metadata must declare controls[] for server-side validation');
+    return errors;
+  }
+
+  const seenIds = new Set<string>();
+  const controlsById = new Map<string, BeadFormControl>();
+  for (const control of controls) {
+    if (seenIds.has(control.id)) errors.push(`Duplicate control id "${control.id}" in controls[]`);
+    seenIds.add(control.id);
+    controlsById.set(control.id, control);
+    if (!control.name) errors.push(`Control "${control.id}" must declare a name`);
+  }
+
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return errors;
+  const document = new DOMParser().parseFromString(sanitizeFormHtml(form.html), 'text/html');
+  const htmlIds = new Set<string>();
+
+  for (const element of Array.from(document.body.querySelectorAll(CONTROL_SELECTOR))) {
+    const tagName = element.tagName.toLowerCase();
+    const type = element.getAttribute('type')?.toLowerCase();
+    if (tagName === 'input' && type === 'submit') continue;
+
+    const id = element.getAttribute('id')?.trim();
+    if (!id) {
+      errors.push(`${tagName} controls must have an id matching controls[]`);
+      continue;
+    }
+    if (htmlIds.has(id)) errors.push(`Duplicate HTML control id "${id}"`);
+    htmlIds.add(id);
+
+    const manifest = controlsById.get(id);
+    if (!manifest) {
+      errors.push(`HTML control "${id}" is missing from controls[]`);
+      continue;
+    }
+
+    const htmlName = element.getAttribute('name')?.trim();
+    if (manifest.name && htmlName !== manifest.name) {
+      errors.push(`Control "${id}" name mismatch: HTML is "${htmlName ?? ''}" but controls[] says "${manifest.name}"`);
+    }
+
+    const actualType = htmlControlType(element);
+    if (actualType && manifest.type !== actualType) {
+      errors.push(`Control "${id}" type mismatch: HTML is "${actualType}" but controls[] says "${manifest.type}"`);
+    }
+  }
+
+  for (const control of controls) {
+    if (!htmlIds.has(control.id)) errors.push(`controls[] entry "${control.id}" does not have a matching HTML control`);
+  }
+
+  return errors;
 }
 
 export function getFormLiveValues(form: BeadForm): FormLiveValues {
@@ -228,7 +327,7 @@ export function applyFormLiveValues(html: string, liveValues: FormLiveValues): s
   const document = new DOMParser().parseFromString(html, 'text/html');
 
   for (const element of Array.from(document.body.querySelectorAll(CONTROL_SELECTOR))) {
-    const identifier = controlIdentifier(element);
+    const identifier = element.getAttribute('id')?.trim() || controlIdentifier(element);
     if (!identifier || !(identifier in liveValues)) continue;
 
     if (element instanceof HTMLInputElement && element.type.toLowerCase() === 'checkbox') {
@@ -277,7 +376,34 @@ export function formDataToValues(formData: FormData): Record<string, unknown> {
   return values;
 }
 
-export function formElementToValues(form: HTMLFormElement): Record<string, unknown> {
+function valueForControl(control: BeadFormControl, element: HTMLElement): unknown {
+  if (element instanceof HTMLInputElement) {
+    if (control.type === 'checkbox' || control.type === 'radio') return element.checked;
+    if (control.type === 'number' || control.type === 'range') return element.value === '' ? '' : Number(element.value);
+    return element.value;
+  }
+  if (element instanceof HTMLTextAreaElement) return element.value;
+  if (element instanceof HTMLSelectElement) {
+    if (control.multiple || element.multiple) {
+      return Array.from(element.selectedOptions).map((option) => option.value);
+    }
+    return element.value;
+  }
+  return undefined;
+}
+
+export function formElementToValues(form: HTMLFormElement, controls?: BeadFormControl[]): Record<string, unknown> {
+  if (controls && controls.length > 0) {
+    const values: Record<string, unknown> = {};
+    for (const control of controls) {
+      const element = form.querySelector<HTMLElement>(`#${CSS.escape(control.id)}`);
+      if (!element) continue;
+      const value = valueForControl(control, element);
+      if (value !== undefined) values[control.id] = value;
+    }
+    return values;
+  }
+
   const values = formDataToValues(new FormData(form));
 
   for (const element of Array.from(form.elements)) {

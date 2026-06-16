@@ -129,6 +129,29 @@ describe('api.beads', () => {
     });
   });
 
+  describe('updateFormLiveValue', () => {
+    it('calls PATCH /api/beads/forms/live-value with correct body', async () => {
+      const updateData = {
+        path: '/my/project',
+        id: 'bead-123',
+        formId: 'review',
+        controlId: 'ack',
+        value: true,
+      };
+
+      mockFetch.mockResolvedValue(mockResponse({ success: true }));
+
+      const result = await api.beads.updateFormLiveValue(updateData);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url, options] = mockFetch.mock.calls[0];
+      expect(url).toContain('/api/beads/forms/live-value');
+      expect(options.method).toBe('PATCH');
+      expect(JSON.parse(options.body)).toEqual(updateData);
+      expect(result).toEqual({ success: true });
+    });
+  });
+
   describe('read', () => {
     it('calls GET /api/beads with path query param', async () => {
       mockFetch.mockResolvedValue(mockResponse({ beads: [] }));

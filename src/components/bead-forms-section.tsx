@@ -9,10 +9,10 @@ import * as api from "@/lib/api";
 import {
   applyFormLiveValues,
   formElementToValues,
+  getFormControlManifestErrors,
   getFormIdentifierErrors,
   getFormLiveValues,
   getBeadForms,
-  setFormLiveValues,
   sanitizeFormHtml,
   type BeadForm,
   type FormLiveValues,
@@ -40,6 +40,8 @@ function BeadFormRenderer({ bead, form, projectPath, onUpdate }: BeadFormRendere
   const canSubmit = !!projectPath;
   const sanitizedHtml = useMemo(() => sanitizeFormHtml(form.html), [form.html]);
   const identifierErrors = useMemo(() => getFormIdentifierErrors(form.html), [form.html]);
+  const manifestErrors = useMemo(() => getFormControlManifestErrors(form), [form]);
+  const formErrors = identifierErrors.length > 0 ? identifierErrors : manifestErrors;
   const renderedHtml = useMemo(() => applyFormLiveValues(sanitizedHtml, liveValues), [sanitizedHtml, liveValues]);
 
   useEffect(() => {
@@ -51,8 +53,10 @@ function BeadFormRenderer({ bead, form, projectPath, onUpdate }: BeadFormRendere
     if (!(target instanceof HTMLInputElement)) return;
     if (target.type.toLowerCase() !== 'checkbox') return;
 
-    const identifier = target.id.trim() || target.name.trim();
+    const identifier = target.id.trim();
     if (!identifier) return;
+    const control = form.controls?.find((candidate) => candidate.id === identifier);
+    if (!control?.live) return;
     if (!projectPath) {
       toast({ variant: "destructive", title: "Cannot save checkbox", description: "Open this bead from a project to update checkbox state." });
       target.checked = !target.checked;
@@ -65,8 +69,13 @@ function BeadFormRenderer({ bead, form, projectPath, onUpdate }: BeadFormRendere
     setLiveValues(next);
 
     try {
-      const metadata = setFormLiveValues(bead.metadata ?? {}, form.id, next);
-      await api.beads.updateMetadata({ path: projectPath, id: bead.id, metadata });
+      await api.beads.updateFormLiveValue({
+        path: projectPath,
+        id: bead.id,
+        formId: form.id,
+        controlId: identifier,
+        value: checked,
+      });
       onUpdate?.();
     } catch (error) {
       setLiveValues(previous);
@@ -82,14 +91,14 @@ function BeadFormRenderer({ bead, form, projectPath, onUpdate }: BeadFormRendere
     event.preventDefault();
     if (!projectPath) return;
 
-    if (identifierErrors.length > 0) {
-      toast({ variant: "destructive", title: "Cannot submit form", description: "Every form input needs a unique id or name." });
+    if (formErrors.length > 0) {
+      toast({ variant: "destructive", title: "Cannot submit form", description: "This form's controls manifest does not match its HTML." });
       return;
     }
 
     if (!target.reportValidity()) return;
 
-    const values = formElementToValues(target);
+    const values = formElementToValues(target, form.controls);
     setIsSubmitting(true);
     try {
       const response = await api.beads.submitForm({
@@ -127,11 +136,11 @@ function BeadFormRenderer({ bead, form, projectPath, onUpdate }: BeadFormRendere
         dangerouslySetInnerHTML={{ __html: renderedHtml }}
       />
 
-      {identifierErrors.length > 0 && (
+      {formErrors.length > 0 && (
         <div className="rounded-md border border-danger/30 bg-danger/10 p-3 text-xs text-danger">
-          <p className="font-semibold">This form needs unique identifiers before it can be safely submitted.</p>
+          <p className="font-semibold">This form needs a matching controls manifest before it can be safely submitted.</p>
           <ul className="mt-1 list-disc pl-4">
-            {identifierErrors.map((error) => <li key={error}>{error}</li>)}
+            {formErrors.map((error) => <li key={error}>{error}</li>)}
           </ul>
         </div>
       )}

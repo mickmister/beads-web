@@ -157,6 +157,7 @@ async fn main() {
         .route("/api/beads/update", patch(routes::beads::update_bead_handler))
         .route("/api/beads/metadata", patch(routes::beads::update_bead_metadata_handler))
         .route("/api/beads/forms/submit", post(routes::beads::submit_bead_form_handler))
+        .route("/api/beads/forms/live-value", patch(routes::beads::update_form_live_value_handler))
         // Dolt endpoints
         .route("/api/dolt/status", get(routes::dolt::dolt_status))
         .route("/api/dolt/databases", get(routes::dolt::dolt_databases))

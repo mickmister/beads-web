@@ -167,7 +167,11 @@ pub struct Bead {
     #[serde(default, alias = "related")]
     pub relates_to: Option<Vec<String>>,
     /// Raw dependencies field — accepts both old (array of objects) and new (array of strings) formats.
-    #[serde(default, skip_serializing, deserialize_with = "deserialize_dependencies")]
+    #[serde(
+        default,
+        skip_serializing,
+        deserialize_with = "deserialize_dependencies"
+    )]
     pub(crate) dependencies: Option<RawDependencies>,
 }
 
@@ -189,7 +193,11 @@ where
     let arr = match value {
         Some(serde_json::Value::Array(a)) => a,
         Some(serde_json::Value::Null) | None => return Ok(None),
-        _ => return Err(serde::de::Error::custom("expected array or null for dependencies")),
+        _ => {
+            return Err(serde::de::Error::custom(
+                "expected array or null for dependencies",
+            ))
+        }
     };
 
     if arr.is_empty() {
@@ -304,12 +312,7 @@ fn extract_json_array(output: &str) -> Result<&str, String> {
 /// to the `/api/beads` response. The `project_path` is looked up against
 /// the `projects` table; if no matching project exists (e.g. `dolt://`
 /// paths or paths unknown to the local DB), the cache is skipped.
-fn upsert_counts_cache(
-    db: &Database,
-    project_path: &str,
-    data_source: &str,
-    beads: &[Bead],
-) {
+fn upsert_counts_cache(db: &Database, project_path: &str, data_source: &str, beads: &[Bead]) {
     let project = match db.get_project_by_path(project_path) {
         Ok(Some(p)) => p,
         Ok(None) => {
@@ -361,7 +364,10 @@ fn upsert_counts_cache(
 ///
 /// Calls `bd list --json` for issues and `bd sql` for comments,
 /// then merges them together.
-async fn read_beads_from_cli(project_path: &Path, updated_after: Option<&str>) -> Result<Vec<Bead>, String> {
+async fn read_beads_from_cli(
+    project_path: &Path,
+    updated_after: Option<&str>,
+) -> Result<Vec<Bead>, String> {
     // Get beads, optionally filtered by updated_after
     let list_output = if let Some(since) = updated_after {
         let updated_flag = format!("--updated-after={}", since);
@@ -369,7 +375,10 @@ async fn read_beads_from_cli(project_path: &Path, updated_after: Option<&str>) -
         match run_bd(&args, project_path).await {
             Ok(output) => output,
             Err(e) => {
-                tracing::warn!("bd list --updated-after failed ({}), falling back to full list", e);
+                tracing::warn!(
+                    "bd list --updated-after failed ({}), falling back to full list",
+                    e
+                );
                 run_bd(&["list", "--json", "--all"], project_path).await?
             }
         }
@@ -382,7 +391,11 @@ async fn read_beads_from_cli(project_path: &Path, updated_after: Option<&str>) -
 
     // Get all comments
     let comments_output = run_bd(
-        &["sql", "SELECT * FROM comments ORDER BY issue_id, id", "--json"],
+        &[
+            "sql",
+            "SELECT * FROM comments ORDER BY issue_id, id",
+            "--json",
+        ],
         project_path,
     )
     .await;
@@ -429,8 +442,8 @@ fn is_non_issue_record(line: &str) -> bool {
 
 /// Reads beads from the JSONL file (fallback when bd CLI is unavailable).
 fn read_beads_from_jsonl(issues_path: &Path) -> Result<Vec<Bead>, String> {
-    let contents = std::fs::read_to_string(issues_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let contents =
+        std::fs::read_to_string(issues_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     let mut beads = Vec::new();
     for (line_num, line) in contents.lines().enumerate() {
@@ -445,7 +458,12 @@ fn read_beads_from_jsonl(issues_path: &Path) -> Result<Vec<Bead>, String> {
         match serde_json::from_str::<Bead>(line) {
             Ok(bead) => beads.push(bead),
             Err(e) => {
-                tracing::warn!("Failed to parse bead at line {}: {} - {}", line_num + 1, e, line);
+                tracing::warn!(
+                    "Failed to parse bead at line {}: {} - {}",
+                    line_num + 1,
+                    e,
+                    line
+                );
             }
         }
     }
@@ -484,7 +502,10 @@ pub async fn read_beads(
             Ok(beads) => {
                 let beads = post_process_beads(beads);
                 upsert_counts_cache(&db, &path, "dolt-direct", &beads);
-                (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-direct" })))
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({ "beads": beads, "source": "dolt-direct" })),
+                )
             }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -518,7 +539,10 @@ pub async fn read_beads(
         let port_alive = tokio::time::timeout(
             std::time::Duration::from_millis(500),
             tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)),
-        ).await.map(|r| r.is_ok()).unwrap_or(false);
+        )
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false);
 
         if port_alive {
             // Try known db name first, then discover via SHOW DATABASES
@@ -531,16 +555,31 @@ pub async fn read_beads(
             };
 
             if let Some(db_name) = db_name {
-                tracing::info!("Trying per-project Dolt server on port {} for db {}", port, db_name);
+                tracing::info!(
+                    "Trying per-project Dolt server on port {} for db {}",
+                    port,
+                    db_name
+                );
                 match dolt::read_beads_on_port(port, &db_name).await {
                     Ok(beads) => {
-                        tracing::info!("Read {} beads from per-project Dolt (port {})", beads.len(), port);
+                        tracing::info!(
+                            "Read {} beads from per-project Dolt (port {})",
+                            beads.len(),
+                            port
+                        );
                         let beads = post_process_beads(beads);
                         upsert_counts_cache(&db, &path, "dolt-project", &beads);
-                        return (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-project" })));
+                        return (
+                            StatusCode::OK,
+                            Json(serde_json::json!({ "beads": beads, "source": "dolt-project" })),
+                        );
                     }
                     Err(e) => {
-                        tracing::warn!("Per-project Dolt server on port {} failed: {}, falling back", port, e);
+                        tracing::warn!(
+                            "Per-project Dolt server on port {} failed: {}, falling back",
+                            port,
+                            e
+                        );
                     }
                 }
             }
@@ -558,7 +597,10 @@ pub async fn read_beads(
                 match dolt_manager.read_beads(&db_name).await {
                     Ok(b) => break 'fallback (b, "dolt-central"),
                     Err(crate::dolt::DoltError::DatabaseNotFound(_)) => {
-                        tracing::info!("Dolt database {} not found on SQL server, trying bd CLI", db_name);
+                        tracing::info!(
+                            "Dolt database {} not found on SQL server, trying bd CLI",
+                            db_name
+                        );
                         // Don't skip CLI — bd can read from local .beads/dolt in direct mode
                     }
                     Err(e) => {
@@ -571,7 +613,11 @@ pub async fn read_beads(
         // Tier 2: Try bd CLI
         match read_beads_from_cli(&project_path, params.updated_after.as_deref()).await {
             Ok(b) => {
-                let mode = if params.updated_after.is_some() { "incremental" } else { "full" };
+                let mode = if params.updated_after.is_some() {
+                    "incremental"
+                } else {
+                    "full"
+                };
                 tracing::info!("Read {} beads from bd CLI for {} ({})", b.len(), path, mode);
                 break 'fallback (b, "cli");
             }
@@ -585,7 +631,9 @@ pub async fn read_beads(
         if !issues_path.exists() {
             return (
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "No data source available: Dolt SQL, bd CLI, and JSONL all failed" })),
+                Json(
+                    serde_json::json!({ "error": "No data source available: Dolt SQL, bd CLI, and JSONL all failed" }),
+                ),
             );
         }
         match read_beads_from_jsonl(&issues_path) {
@@ -601,7 +649,10 @@ pub async fn read_beads(
 
     let beads = post_process_beads(beads);
     upsert_counts_cache(&db, &path, source, &beads);
-    (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": source })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "beads": beads, "source": source })),
+    )
 }
 
 /// Request body for creating a new bead.
@@ -654,15 +705,18 @@ pub async fn create_bead_handler(
         let short_id = &Utc::now().timestamp_millis().to_string()[6..];
         let bead_id = format!("{}-{}", prefix, short_id);
 
-        match dolt_manager.create_bead(
-            db_name,
-            &bead_id,
-            title,
-            req.description.as_deref(),
-            issue_type,
-            priority,
-            req.parent_id.as_deref(),
-        ).await {
+        match dolt_manager
+            .create_bead(
+                db_name,
+                &bead_id,
+                title,
+                req.description.as_deref(),
+                issue_type,
+                priority,
+                req.parent_id.as_deref(),
+            )
+            .await
+        {
             Ok(()) => {
                 return (
                     StatusCode::CREATED,
@@ -681,13 +735,13 @@ pub async fn create_bead_handler(
     // Filesystem path: delegate to bd CLI
     let project_path = std::path::PathBuf::from(&req.path);
     if let Err(e) = validate_path_security(&project_path) {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": e })));
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": e })),
+        );
     }
 
-    let mut args = vec![
-        "create".to_string(),
-        format!("--title={}", title),
-    ];
+    let mut args = vec!["create".to_string(), format!("--title={}", title)];
     if let Some(ref desc) = req.description {
         if !desc.trim().is_empty() {
             args.push(format!("-d={}", desc));
@@ -701,15 +755,20 @@ pub async fn create_bead_handler(
 
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        Command::new("bd").args(&args).current_dir(&project_path).output(),
-    ).await;
+        Command::new("bd")
+            .args(&args)
+            .current_dir(&project_path)
+            .output(),
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // Try to extract bead ID from CLI output
-                let id = stdout.lines()
+                let id = stdout
+                    .lines()
                     .find_map(|line| {
                         // bd create typically outputs the new bead ID
                         let trimmed = line.trim();
@@ -723,10 +782,16 @@ pub async fn create_bead_handler(
                         }
                     })
                     .unwrap_or_else(|| stdout.trim().to_string());
-                (StatusCode::CREATED, Json(serde_json::json!({ "id": id, "stdout": stdout.trim() })))
+                (
+                    StatusCode::CREATED,
+                    Json(serde_json::json!({ "id": id, "stdout": stdout.trim() })),
+                )
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": stderr.trim() })))
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": stderr.trim() })),
+                )
             }
         }
         Ok(Err(e)) => (
@@ -787,13 +852,16 @@ pub async fn update_bead_handler(
             );
         }
 
-        match dolt_manager.update_bead(
-            db_name,
-            &req.id,
-            req.title.as_deref(),
-            req.description.as_deref(),
-            req.status.as_deref(),
-        ).await {
+        match dolt_manager
+            .update_bead(
+                db_name,
+                &req.id,
+                req.title.as_deref(),
+                req.description.as_deref(),
+                req.status.as_deref(),
+            )
+            .await
+        {
             Ok(()) => {
                 return (StatusCode::OK, Json(serde_json::json!({ "success": true })));
             }
@@ -809,7 +877,10 @@ pub async fn update_bead_handler(
     // Filesystem path: delegate to bd CLI
     let project_path = std::path::PathBuf::from(&req.path);
     if let Err(e) = validate_path_security(&project_path) {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": e })));
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": e })),
+        );
     }
 
     // Build bd update args
@@ -826,8 +897,12 @@ pub async fn update_bead_handler(
 
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        Command::new("bd").args(&args).current_dir(&project_path).output(),
-    ).await;
+        Command::new("bd")
+            .args(&args)
+            .current_dir(&project_path)
+            .output(),
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {
@@ -835,7 +910,10 @@ pub async fn update_bead_handler(
                 (StatusCode::OK, Json(serde_json::json!({ "success": true })))
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": stderr.trim() })))
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": stderr.trim() })),
+                )
             }
         }
         Ok(Err(e)) => (
@@ -848,8 +926,6 @@ pub async fn update_bead_handler(
         ),
     }
 }
-
-
 
 /// Request body for submitting an HTML form attached to a bead.
 #[derive(Debug, Deserialize)]
@@ -870,6 +946,194 @@ pub struct SubmitBeadFormResponse {
     pub success: bool,
     #[serde(rename = "webhookMarkdown", skip_serializing_if = "Option::is_none")]
     pub webhook_markdown: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateFormLiveValueRequest {
+    /// Project path or `dolt://dbname`
+    pub path: String,
+    /// Bead ID to update
+    pub id: String,
+    /// Form ID under `metadata.beadsWeb.forms[]`
+    #[serde(rename = "formId")]
+    pub form_id: String,
+    /// Control ID under `metadata.beadsWeb.forms[].controls[]`
+    #[serde(rename = "controlId")]
+    pub control_id: String,
+    /// New live value for the control
+    pub value: serde_json::Value,
+}
+
+fn find_form<'a>(
+    metadata: &'a serde_json::Value,
+    form_id: &str,
+) -> Result<&'a serde_json::Value, String> {
+    metadata
+        .get("beadsWeb")
+        .and_then(|beads_web| beads_web.get("forms"))
+        .and_then(|forms| forms.as_array())
+        .and_then(|forms| {
+            forms
+                .iter()
+                .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
+        })
+        .ok_or_else(|| format!("Form not found: {}", form_id))
+}
+
+fn form_controls(form: &serde_json::Value) -> Result<&Vec<serde_json::Value>, String> {
+    form.get("controls")
+        .and_then(|controls| controls.as_array())
+        .ok_or_else(|| "Form must declare controls[] for server-side validation".to_string())
+}
+
+fn control_id(control: &serde_json::Value) -> Option<&str> {
+    control
+        .get("id")
+        .and_then(|id| id.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+}
+
+fn control_type(control: &serde_json::Value) -> &str {
+    control
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("text")
+}
+
+fn validate_control_manifest(form: &serde_json::Value) -> Result<(), String> {
+    let controls = form_controls(form)?;
+    if controls.is_empty() {
+        return Err("Form must declare at least one control".to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for control in controls {
+        let id = control_id(control)
+            .ok_or_else(|| "Each form control must declare a non-empty id".to_string())?;
+        if !seen.insert(id.to_string()) {
+            return Err(format!("Duplicate control id \"{}\"", id));
+        }
+        if control
+            .get("name")
+            .and_then(|name| name.as_str())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .is_none()
+        {
+            return Err(format!("Control \"{}\" must declare a name", id));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_value_for_control(
+    control: &serde_json::Value,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    match control_type(control) {
+        "checkbox" | "radio" => {
+            if value.is_boolean() {
+                Ok(())
+            } else {
+                Err("checkbox/radio values must be booleans".to_string())
+            }
+        }
+        "number" | "range" => {
+            if value.is_number()
+                || value
+                    .as_str()
+                    .is_some_and(|s| s.is_empty() || s.parse::<f64>().is_ok())
+            {
+                Ok(())
+            } else {
+                Err("number values must be numeric".to_string())
+            }
+        }
+        "select" => {
+            let multiple = control
+                .get("multiple")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            if multiple {
+                if value
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(|item| item.is_string()))
+                {
+                    Ok(())
+                } else {
+                    Err("multi-select values must be string arrays".to_string())
+                }
+            } else if value.is_string() {
+                Ok(())
+            } else {
+                Err("select values must be strings".to_string())
+            }
+        }
+        _ => {
+            if value.is_string() {
+                Ok(())
+            } else {
+                Err("text values must be strings".to_string())
+            }
+        }
+    }
+}
+
+fn validate_form_values(
+    metadata: &serde_json::Value,
+    form_id: &str,
+    values: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let form = find_form(metadata, form_id)?;
+    validate_control_manifest(form)?;
+    let controls = form_controls(form)?;
+    let mut controls_by_id: HashMap<&str, &serde_json::Value> = HashMap::new();
+    for control in controls {
+        if let Some(id) = control_id(control) {
+            controls_by_id.insert(id, control);
+        }
+    }
+
+    for key in values.keys() {
+        if !controls_by_id.contains_key(key.as_str()) {
+            return Err(format!(
+                "Submitted field \"{}\" is not declared in controls[]",
+                key
+            ));
+        }
+    }
+
+    for (id, control) in controls_by_id {
+        let required = control
+            .get("required")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let Some(value) = values.get(id) else {
+            if required {
+                return Err(format!("Required field \"{}\" is missing", id));
+            }
+            continue;
+        };
+
+        validate_value_for_control(control, value)
+            .map_err(|e| format!("Invalid value for field \"{}\": {}", id, e))?;
+
+        if required {
+            let missing = match value {
+                serde_json::Value::String(s) => s.trim().is_empty(),
+                serde_json::Value::Array(items) => items.is_empty(),
+                serde_json::Value::Bool(checked) if control_type(control) == "checkbox" => !checked,
+                _ => false,
+            };
+            if missing {
+                return Err(format!("Required field \"{}\" is missing", id));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn append_form_response(
@@ -918,16 +1182,78 @@ fn append_form_response(
         .ok_or_else(|| "Form responses must be an array".to_string())?;
 
     let mut response = serde_json::Map::new();
-    response.insert("submittedBy".to_string(), serde_json::Value::String("user".to_string()));
-    response.insert("submittedAt".to_string(), serde_json::Value::String(submitted_at.to_string()));
+    response.insert(
+        "submittedBy".to_string(),
+        serde_json::Value::String("user".to_string()),
+    );
+    response.insert(
+        "submittedAt".to_string(),
+        serde_json::Value::String(submitted_at.to_string()),
+    );
     response.insert("values".to_string(), serde_json::Value::Object(values));
     if let Some(markdown) = webhook_markdown {
-        response.insert("webhookMarkdown".to_string(), serde_json::Value::String(markdown.to_string()));
+        response.insert(
+            "webhookMarkdown".to_string(),
+            serde_json::Value::String(markdown.to_string()),
+        );
     }
     responses.push(serde_json::Value::Object(response));
     Ok(())
 }
 
+fn set_form_live_value(
+    metadata: &mut serde_json::Value,
+    form_id: &str,
+    control_id_to_update: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let form = find_form(metadata, form_id)?;
+    validate_control_manifest(form)?;
+    let control = form_controls(form)?
+        .iter()
+        .find(|control| control_id(control) == Some(control_id_to_update))
+        .ok_or_else(|| format!("Control not found: {}", control_id_to_update))?;
+    if control_type(control) != "checkbox" {
+        return Err(format!(
+            "Control \"{}\" is not a live checkbox",
+            control_id_to_update
+        ));
+    }
+    if !control
+        .get("live")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        return Err(format!("Control \"{}\" is not live", control_id_to_update));
+    }
+    if !value.is_boolean() {
+        return Err("Live checkbox values must be booleans".to_string());
+    }
+
+    let forms = metadata
+        .get_mut("beadsWeb")
+        .and_then(|beads_web| beads_web.get_mut("forms"))
+        .and_then(|forms| forms.as_array_mut())
+        .ok_or_else(|| "beadsWeb.forms must be an array".to_string())?;
+    let form = forms
+        .iter_mut()
+        .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
+        .ok_or_else(|| format!("Form not found: {}", form_id))?;
+    let form_obj = form
+        .as_object_mut()
+        .ok_or_else(|| "Form metadata must be an object".to_string())?;
+    let live_values = form_obj
+        .entry("liveValues".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !live_values.is_object() {
+        *live_values = serde_json::json!({});
+    }
+    live_values
+        .as_object_mut()
+        .ok_or_else(|| "Form liveValues must be an object".to_string())?
+        .insert(control_id_to_update.to_string(), value);
+    Ok(())
+}
 
 fn attach_form_response_webhook_markdown(
     metadata: &mut serde_json::Value,
@@ -951,16 +1277,27 @@ fn attach_form_response_webhook_markdown(
     let response = responses
         .iter_mut()
         .rev()
-        .find(|candidate| candidate.get("submittedAt").and_then(|value| value.as_str()) == Some(submitted_at))
+        .find(|candidate| {
+            candidate
+                .get("submittedAt")
+                .and_then(|value| value.as_str())
+                == Some(submitted_at)
+        })
         .ok_or_else(|| "Submitted response not found".to_string())?;
     let response_obj = response
         .as_object_mut()
         .ok_or_else(|| "Form response must be an object".to_string())?;
-    response_obj.insert("webhookMarkdown".to_string(), serde_json::Value::String(markdown.to_string()));
+    response_obj.insert(
+        "webhookMarkdown".to_string(),
+        serde_json::Value::String(markdown.to_string()),
+    );
     Ok(())
 }
 
-async fn read_bead_metadata_from_cli(project_path: &Path, bead_id: &str) -> Result<serde_json::Value, String> {
+async fn read_bead_metadata_from_cli(
+    project_path: &Path,
+    bead_id: &str,
+) -> Result<serde_json::Value, String> {
     let output = run_bd(&["show", bead_id, "--json", "--long"], project_path).await?;
     let json_str = extract_json_array(&output)?;
     let beads: Vec<Bead> = serde_json::from_str(json_str)
@@ -972,9 +1309,13 @@ async fn read_bead_metadata_from_cli(project_path: &Path, bead_id: &str) -> Resu
     Ok(bead.metadata.unwrap_or_else(|| serde_json::json!({})))
 }
 
-async fn update_metadata_with_cli(project_path: &Path, bead_id: &str, metadata: &serde_json::Value) -> Result<(), String> {
-    let metadata_json = serde_json::to_string(metadata)
-        .map_err(|e| format!("Invalid metadata: {}", e))?;
+async fn update_metadata_with_cli(
+    project_path: &Path,
+    bead_id: &str,
+    metadata: &serde_json::Value,
+) -> Result<(), String> {
+    let metadata_json =
+        serde_json::to_string(metadata).map_err(|e| format!("Invalid metadata: {}", e))?;
     let bd_path = super::find_bd()
         .ok_or_else(|| "bd CLI not found".to_string())?
         .clone();
@@ -985,8 +1326,10 @@ async fn update_metadata_with_cli(project_path: &Path, bead_id: &str, metadata: 
             .args(["update", bead_id, "--metadata", metadata_json.as_str()])
             .current_dir(project_path)
             .output(),
-    ).await.map_err(|_| "bd command timed out".to_string())?
-        .map_err(|e| format!("Failed to execute bd: {}", e))?;
+    )
+    .await
+    .map_err(|_| "bd command timed out".to_string())?
+    .map_err(|e| format!("Failed to execute bd: {}", e))?;
 
     if output.status.success() {
         Ok(())
@@ -995,8 +1338,68 @@ async fn update_metadata_with_cli(project_path: &Path, bead_id: &str, metadata: 
     }
 }
 
+async fn read_bead_metadata(
+    dolt_manager: &DoltManager,
+    path: &str,
+    bead_id: &str,
+) -> Result<serde_json::Value, (StatusCode, String)> {
+    if let Some(db_name) = path.strip_prefix(DOLT_PATH_PREFIX) {
+        if !dolt_manager.is_available() && !dolt_manager.check_server().await {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Dolt server is not running".to_string(),
+            ));
+        }
+        return dolt_manager
+            .read_beads(db_name)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+            .map(|beads| {
+                beads
+                    .into_iter()
+                    .find(|bead| bead.id == bead_id)
+                    .and_then(|bead| bead.metadata)
+                    .unwrap_or_else(|| serde_json::json!({}))
+            });
+    }
+
+    let project_path = PathBuf::from(path);
+    if let Err(e) = validate_path_security(&project_path) {
+        return Err((StatusCode::FORBIDDEN, e));
+    }
+    read_bead_metadata_from_cli(&project_path, bead_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
+async fn persist_bead_metadata(
+    dolt_manager: &DoltManager,
+    path: &str,
+    bead_id: &str,
+    metadata: &serde_json::Value,
+) -> Result<(), (StatusCode, String)> {
+    if let Some(db_name) = path.strip_prefix(DOLT_PATH_PREFIX) {
+        let metadata_json = serde_json::to_string(metadata)
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        return dolt_manager
+            .update_bead_metadata(db_name, bead_id, &metadata_json)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+    }
+
+    let project_path = PathBuf::from(path);
+    if let Err(e) = validate_path_security(&project_path) {
+        return Err((StatusCode::FORBIDDEN, e));
+    }
+    update_metadata_with_cli(&project_path, bead_id, metadata)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+}
+
 async fn add_label_with_cli(project_path: &Path, bead_id: &str, label: &str) -> Result<(), String> {
-    run_bd(&["tag", bead_id, label], project_path).await.map(|_| ())
+    run_bd(&["tag", bead_id, label], project_path)
+        .await
+        .map(|_| ())
 }
 
 async fn call_form_webhook(
@@ -1031,7 +1434,9 @@ async fn call_form_webhook(
         return Err(format!("Form webhook returned {}", response.status()));
     }
 
-    let markdown = response.text().await
+    let markdown = response
+        .text()
+        .await
         .map_err(|e| format!("Failed to read form webhook response: {}", e))?;
     let trimmed = markdown.trim().to_string();
     Ok((!trimmed.is_empty()).then_some(trimmed))
@@ -1051,83 +1456,70 @@ pub async fn submit_bead_form_handler(
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Bead ID is required" })),
-        ).into_response();
+        )
+            .into_response();
     }
     if req.form_id.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "Form ID is required" })),
-        ).into_response();
+        )
+            .into_response();
     }
 
     let submitted_at = Utc::now().to_rfc3339();
-    let mut metadata = if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
-        if !dolt_manager.is_available() && !dolt_manager.check_server().await {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({ "error": "Dolt server is not running" })),
-            ).into_response();
-        }
-        match dolt_manager.read_beads(db_name).await {
-            Ok(beads) => beads
-                .into_iter()
-                .find(|bead| bead.id == req.id)
-                .and_then(|bead| bead.metadata)
-                .unwrap_or_else(|| serde_json::json!({})),
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": e.to_string() })),
-                ).into_response();
-            }
-        }
-    } else {
-        let project_path = PathBuf::from(&req.path);
-        if let Err(e) = validate_path_security(&project_path) {
-            return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": e }))).into_response();
-        }
-        match read_bead_metadata_from_cli(&project_path, &req.id).await {
-            Ok(metadata) => metadata,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": e })),
-                ).into_response();
-            }
+    let mut metadata = match read_bead_metadata(&dolt_manager, &req.path, &req.id).await {
+        Ok(metadata) => metadata,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
         }
     };
 
-    if let Err(e) = append_form_response(&mut metadata, &req.form_id, req.values.clone(), &submitted_at, None) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))).into_response();
+    if let Err(e) = validate_form_values(&metadata, &req.form_id, &req.values) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    };
+
+    if let Err(e) = append_form_response(
+        &mut metadata,
+        &req.form_id,
+        req.values.clone(),
+        &submitted_at,
+        None,
+    ) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    }
+
+    if let Err((status, error)) =
+        persist_bead_metadata(&dolt_manager, &req.path, &req.id, &metadata).await
+    {
+        return (status, Json(serde_json::json!({ "error": error }))).into_response();
     }
 
     if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
-        let metadata_json = match serde_json::to_string(&metadata) {
-            Ok(json) => json,
-            Err(e) => {
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e.to_string() }))).into_response();
-            }
-        };
-        if let Err(e) = dolt_manager.update_bead_metadata(db_name, &req.id, &metadata_json).await {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            ).into_response();
+        if let Err(e) = dolt_manager
+            .add_bead_label(db_name, &req.id, "needs-agent-review")
+            .await
+        {
+            tracing::warn!(
+                "Failed to add needs-agent-review label after form submit: {}",
+                e
+            );
         }
     } else {
         let project_path = PathBuf::from(&req.path);
-        if let Err(e) = update_metadata_with_cli(&project_path, &req.id, &metadata).await {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e })),
-            ).into_response();
-        }
-    }
-
-    if !req.path.starts_with(DOLT_PATH_PREFIX) {
-        let project_path = PathBuf::from(&req.path);
         if let Err(e) = add_label_with_cli(&project_path, &req.id, "needs-agent-review").await {
-            tracing::warn!("Failed to add needs-agent-review label after form submit: {}", e);
+            tracing::warn!(
+                "Failed to add needs-agent-review label after form submit: {}",
+                e
+            );
         }
     }
 
@@ -1140,17 +1532,17 @@ pub async fn submit_bead_form_handler(
     };
 
     if let Some(markdown) = webhook_markdown.as_deref() {
-        if let Err(e) = attach_form_response_webhook_markdown(&mut metadata, &req.form_id, &submitted_at, markdown) {
+        if let Err(e) = attach_form_response_webhook_markdown(
+            &mut metadata,
+            &req.form_id,
+            &submitted_at,
+            markdown,
+        ) {
             tracing::warn!("Failed to attach webhook markdown: {}", e);
-        } else if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
-            if let Ok(metadata_json) = serde_json::to_string(&metadata) {
-                if let Err(e) = dolt_manager.update_bead_metadata(db_name, &req.id, &metadata_json).await {
-                    tracing::warn!("Failed to persist webhook markdown: {}", e);
-                }
-            }
         } else {
-            let project_path = PathBuf::from(&req.path);
-            if let Err(e) = update_metadata_with_cli(&project_path, &req.id, &metadata).await {
+            if let Err((_, e)) =
+                persist_bead_metadata(&dolt_manager, &req.path, &req.id, &metadata).await
+            {
                 tracing::warn!("Failed to persist webhook markdown: {}", e);
             }
         }
@@ -1159,7 +1551,55 @@ pub async fn submit_bead_form_handler(
     Json(SubmitBeadFormResponse {
         success: true,
         webhook_markdown,
-    }).into_response()
+    })
+    .into_response()
+}
+
+/// PATCH /api/beads/forms/live-value
+///
+/// Updates one live form control value on the latest bead metadata. This avoids
+/// replacing the whole metadata object from stale client props when users click
+/// live checkboxes.
+pub async fn update_form_live_value_handler(
+    Extension(dolt_manager): Extension<Arc<DoltManager>>,
+    Json(req): Json<UpdateFormLiveValueRequest>,
+) -> impl IntoResponse {
+    if req.id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Bead ID is required" })),
+        )
+            .into_response();
+    }
+    if req.form_id.trim().is_empty() || req.control_id.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Form ID and control ID are required" })),
+        )
+            .into_response();
+    }
+
+    let mut metadata = match read_bead_metadata(&dolt_manager, &req.path, &req.id).await {
+        Ok(metadata) => metadata,
+        Err((status, error)) => {
+            return (status, Json(serde_json::json!({ "error": error }))).into_response();
+        }
+    };
+
+    if let Err(e) = set_form_live_value(&mut metadata, &req.form_id, &req.control_id, req.value) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    }
+
+    match persist_bead_metadata(&dolt_manager, &req.path, &req.id, &metadata).await {
+        Ok(()) => Json(serde_json::json!({ "success": true })).into_response(),
+        Err((status, error)) => {
+            (status, Json(serde_json::json!({ "error": error }))).into_response()
+        }
+    }
 }
 
 /// Request body for replacing a bead metadata object.
@@ -1209,7 +1649,10 @@ pub async fn update_bead_metadata_handler(
             );
         }
 
-        return match dolt_manager.update_bead_metadata(db_name, &req.id, &metadata_json).await {
+        return match dolt_manager
+            .update_bead_metadata(db_name, &req.id, &metadata_json)
+            .await
+        {
             Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "success": true }))),
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1220,7 +1663,10 @@ pub async fn update_bead_metadata_handler(
 
     let project_path = std::path::PathBuf::from(&req.path);
     if let Err(e) = validate_path_security(&project_path) {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": e })));
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": e })),
+        );
     }
 
     let bd_path = match super::find_bd() {
@@ -1236,10 +1682,16 @@ pub async fn update_bead_metadata_handler(
     let result = tokio::time::timeout(
         Duration::from_secs(30),
         Command::new(bd_path)
-            .args(["update", req.id.as_str(), "--metadata", metadata_json.as_str()])
+            .args([
+                "update",
+                req.id.as_str(),
+                "--metadata",
+                metadata_json.as_str(),
+            ])
             .current_dir(&project_path)
             .output(),
-    ).await;
+    )
+    .await;
 
     match result {
         Ok(Ok(output)) => {
@@ -1247,7 +1699,10 @@ pub async fn update_bead_metadata_handler(
                 (StatusCode::OK, Json(serde_json::json!({ "success": true })))
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": stderr.trim() })))
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": stderr.trim() })),
+                )
             }
         }
         Ok(Err(e)) => (
@@ -1319,8 +1774,7 @@ fn post_process_beads(mut beads: Vec<Bead>) -> Vec<Bead> {
     }
 
     // Second pass: Infer parent-child from ID patterns (e.g., "64n.1" -> parent "64n")
-    let bead_ids: std::collections::HashSet<String> =
-        beads.iter().map(|b| b.id.clone()).collect();
+    let bead_ids: std::collections::HashSet<String> = beads.iter().map(|b| b.id.clone()).collect();
 
     let inferred: Vec<(String, String)> = beads
         .iter()
@@ -1415,8 +1869,8 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
     }
 
     // Read the file contents
-    let contents = std::fs::read_to_string(issues_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let contents =
+        std::fs::read_to_string(issues_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     // Parse JSONL as both raw Values (for lossless write-back) and Beads (for logic)
     let mut raw_lines: Vec<serde_json::Value> = Vec::new();
@@ -1431,31 +1885,20 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
             Ok(value) => {
                 // Skip non-issue service records (e.g. `bd remember` memories),
                 // but keep them in raw_lines for lossless write-back.
-                if value
-                    .as_object()
-                    .map_or(false, |o| o.contains_key("_type"))
-                {
+                if value.as_object().map_or(false, |o| o.contains_key("_type")) {
                     raw_lines.push(value);
                     continue;
                 }
                 match serde_json::from_value::<Bead>(value.clone()) {
                     Ok(bead) => beads.push(bead),
                     Err(e) => {
-                        tracing::warn!(
-                            "Failed to parse bead at line {}: {}",
-                            line_num + 1,
-                            e
-                        );
+                        tracing::warn!("Failed to parse bead at line {}: {}", line_num + 1, e);
                     }
                 }
                 raw_lines.push(value);
             }
             Err(e) => {
-                tracing::warn!(
-                    "Failed to parse JSON at line {}: {}",
-                    line_num + 1,
-                    e
-                );
+                tracing::warn!("Failed to parse JSON at line {}: {}", line_num + 1, e);
             }
         }
     }
@@ -1486,8 +1929,7 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
     }
 
     // Second pass: Infer parent-child from ID patterns
-    let bead_ids: std::collections::HashSet<String> =
-        beads.iter().map(|b| b.id.clone()).collect();
+    let bead_ids: std::collections::HashSet<String> = beads.iter().map(|b| b.id.clone()).collect();
 
     for bead in &beads {
         if bead.parent_id.is_none() && bead.id.contains('.') {
@@ -1543,13 +1985,12 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
         for value in &mut raw_lines {
             if let Some(obj) = value.as_object_mut() {
                 if obj.get("id").and_then(|v| v.as_str()) == Some(epic_id) {
-                    tracing::info!(
-                        "Updating epic {} status to {}",
-                        epic_id,
-                        new_status
-                    );
+                    tracing::info!("Updating epic {} status to {}", epic_id, new_status);
                     obj.insert("status".to_string(), serde_json::json!(new_status));
-                    obj.insert("updated_at".to_string(), serde_json::json!(Utc::now().to_rfc3339()));
+                    obj.insert(
+                        "updated_at".to_string(),
+                        serde_json::json!(Utc::now().to_rfc3339()),
+                    );
                     updated_epic_ids.push(epic_id.clone());
                     break;
                 }
@@ -1564,8 +2005,8 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
 
         let mut writer = std::io::BufWriter::new(file);
         for value in &raw_lines {
-            let json_line = serde_json::to_string(value)
-                .map_err(|e| format!("Failed to serialize: {}", e))?;
+            let json_line =
+                serde_json::to_string(value).map_err(|e| format!("Failed to serialize: {}", e))?;
             writeln!(writer, "{}", json_line)
                 .map_err(|e| format!("Failed to write to file: {}", e))?;
         }
@@ -1580,6 +2021,68 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn form_metadata() -> serde_json::Value {
+        serde_json::json!({
+            "beadsWeb": {
+                "forms": [{
+                    "id": "review",
+                    "title": "Review",
+                    "html": "<form></form>",
+                    "controls": [
+                        { "id": "ack", "name": "ack", "type": "checkbox", "live": true },
+                        { "id": "comment", "name": "comment", "type": "textarea", "required": true }
+                    ]
+                }]
+            }
+        })
+    }
+
+    #[test]
+    fn test_validate_form_values_rejects_unknown_fields() {
+        let mut values = serde_json::Map::new();
+        values.insert("unknown".to_string(), serde_json::json!("bad"));
+
+        let err = validate_form_values(&form_metadata(), "review", &values).unwrap_err();
+
+        assert!(err.contains("not declared in controls[]"));
+    }
+
+    #[test]
+    fn test_validate_form_values_requires_controls_manifest() {
+        let metadata = serde_json::json!({
+            "beadsWeb": {
+                "forms": [{ "id": "review", "title": "Review", "html": "<form></form>" }]
+            }
+        });
+        let values = serde_json::Map::new();
+
+        let err = validate_form_values(&metadata, "review", &values).unwrap_err();
+
+        assert!(err.contains("controls[]"));
+    }
+
+    #[test]
+    fn test_validate_form_values_accepts_declared_values() {
+        let mut values = serde_json::Map::new();
+        values.insert("ack".to_string(), serde_json::json!(true));
+        values.insert("comment".to_string(), serde_json::json!("LGTM"));
+
+        validate_form_values(&form_metadata(), "review", &values).unwrap();
+    }
+
+    #[test]
+    fn test_set_form_live_value_updates_single_control() {
+        let mut metadata = form_metadata();
+
+        set_form_live_value(&mut metadata, "review", "ack", serde_json::json!(true)).unwrap();
+
+        assert_eq!(
+            metadata["beadsWeb"]["forms"][0]["liveValues"]["ack"],
+            serde_json::json!(true)
+        );
+        assert!(metadata["beadsWeb"]["forms"][0]["responses"].is_null());
+    }
 
     #[test]
     fn test_is_non_issue_record_memory() {
@@ -1665,7 +2168,10 @@ mod tests {
     fn test_compute_epic_status_all_closed() {
         // All children closed -> Epic should be inreview (ready for final review)
         let statuses = vec!["closed", "closed"];
-        assert_eq!(compute_epic_status_from_children(&statuses), Some("inreview"));
+        assert_eq!(
+            compute_epic_status_from_children(&statuses),
+            Some("inreview")
+        );
     }
 
     #[test]
@@ -1866,10 +2372,22 @@ mod tests {
         println!("OUTPUT: {}", output);
 
         // All original field names must be preserved
-        assert!(output.contains("\"parent\":\"epic-65\""), "parent field preserved");
-        assert!(output.contains("\"dependencies\":[\"task-67\"]"), "dependencies preserved");
-        assert!(output.contains("\"related\":[\"task-35\"]"), "related field preserved");
-        assert!(output.contains("\"closedAt\":\"2026-02-28T12:00:00Z\""), "closedAt preserved");
+        assert!(
+            output.contains("\"parent\":\"epic-65\""),
+            "parent field preserved"
+        );
+        assert!(
+            output.contains("\"dependencies\":[\"task-67\"]"),
+            "dependencies preserved"
+        );
+        assert!(
+            output.contains("\"related\":[\"task-35\"]"),
+            "related field preserved"
+        );
+        assert!(
+            output.contains("\"closedAt\":\"2026-02-28T12:00:00Z\""),
+            "closedAt preserved"
+        );
 
         // No mangled field names
         assert!(!output.contains("parent_id"), "no parent_id in output");
@@ -2001,10 +2519,7 @@ mod tests {
         std::fs::create_dir_all(&worktree_dir).unwrap();
 
         let result = resolve_issues_path(project);
-        assert_eq!(
-            result,
-            worktree_dir.join(".beads").join("issues.jsonl")
-        );
+        assert_eq!(result, worktree_dir.join(".beads").join("issues.jsonl"));
     }
 
     #[test]
@@ -2014,11 +2529,7 @@ mod tests {
         let project = tmp.path();
         let beads_dir = project.join(".beads");
         std::fs::create_dir_all(&beads_dir).unwrap();
-        std::fs::write(
-            beads_dir.join("config.yaml"),
-            "sync-branch: \"\"\n",
-        )
-        .unwrap();
+        std::fs::write(beads_dir.join("config.yaml"), "sync-branch: \"\"\n").unwrap();
 
         let result = resolve_issues_path(project);
         assert_eq!(result, project.join(".beads").join("issues.jsonl"));
@@ -2031,11 +2542,7 @@ mod tests {
         let project = tmp.path();
         let beads_dir = project.join(".beads");
         std::fs::create_dir_all(&beads_dir).unwrap();
-        std::fs::write(
-            beads_dir.join("config.yaml"),
-            "sync-branch: beads-sync\n",
-        )
-        .unwrap();
+        std::fs::write(beads_dir.join("config.yaml"), "sync-branch: beads-sync\n").unwrap();
 
         let worktree_beads = project
             .join(".git")
@@ -2079,11 +2586,7 @@ mod tests {
         let project = tmp.path();
         let beads_dir = project.join(".beads");
         std::fs::create_dir_all(&beads_dir).unwrap();
-        std::fs::write(
-            beads_dir.join("config.yaml"),
-            "sync-branch: null\n",
-        )
-        .unwrap();
+        std::fs::write(beads_dir.join("config.yaml"), "sync-branch: null\n").unwrap();
 
         let result = resolve_issues_path(project);
         assert_eq!(result, project.join(".beads").join("issues.jsonl"));

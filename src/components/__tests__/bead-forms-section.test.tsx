@@ -7,12 +7,14 @@ import { BeadFormsSection } from '../bead-forms-section';
 
 const submitForm = vi.fn().mockResolvedValue({ success: true, webhookMarkdown: '**Thanks**' });
 const updateMetadata = vi.fn().mockResolvedValue({ success: true });
+const updateFormLiveValue = vi.fn().mockResolvedValue({ success: true });
 const toast = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   beads: {
     submitForm: (...args: unknown[]) => submitForm(...args),
     updateMetadata: (...args: unknown[]) => updateMetadata(...args),
+    updateFormLiveValue: (...args: unknown[]) => updateFormLiveValue(...args),
   },
 }));
 
@@ -37,7 +39,8 @@ const bead: Bead = {
         {
           id: 'review',
           title: 'Review form',
-          html: '<form><h2>Context</h2><label>Comment<textarea name="comment" required></textarea></label><button type="submit">Send</button></form>',
+          html: '<form><h2>Context</h2><label for="comment">Comment</label><textarea id="comment" name="comment" required></textarea><button type="submit">Send</button></form>',
+          controls: [{ id: 'comment', name: 'comment', type: 'textarea', required: true }],
           responses: [],
         },
       ],
@@ -48,6 +51,7 @@ const bead: Bead = {
 beforeEach(() => {
   submitForm.mockClear();
   updateMetadata.mockClear();
+  updateFormLiveValue.mockClear();
   toast.mockClear();
 });
 
@@ -87,7 +91,8 @@ describe('BeadFormsSection', () => {
             {
               id: 'review',
               title: 'Review form',
-              html: '<form><label><input id="ack" type="checkbox"> Ack</label><button type="submit">Send</button></form>',
+              html: '<form><label><input id="ack" name="ack" type="checkbox"> Ack</label><button type="submit">Send</button></form>',
+              controls: [{ id: 'ack', name: 'ack', type: 'checkbox', live: true }],
               responses: [],
             },
           ],
@@ -100,21 +105,15 @@ describe('BeadFormsSection', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: /Ack/ }));
 
-    await waitFor(() => expect(updateMetadata).toHaveBeenCalledTimes(1));
-    expect(updateMetadata).toHaveBeenCalledWith({
+    await waitFor(() => expect(updateFormLiveValue).toHaveBeenCalledTimes(1));
+    expect(updateFormLiveValue).toHaveBeenCalledWith({
       path: '/project',
       id: 'bd-1',
-      metadata: {
-        beadsWeb: {
-          forms: [
-            expect.objectContaining({
-              id: 'review',
-              liveValues: { ack: true },
-            }),
-          ],
-        },
-      },
+      formId: 'review',
+      controlId: 'ack',
+      value: true,
     });
+    expect(updateMetadata).not.toHaveBeenCalled();
     expect(onUpdate).toHaveBeenCalled();
   });
 });
