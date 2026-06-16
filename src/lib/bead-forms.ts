@@ -292,24 +292,41 @@ export function getFormControlManifestErrors(form: BeadForm): string[] {
     if (htmlIds.has(id)) errors.push(`Duplicate HTML control id "${id}"`);
     htmlIds.add(id);
 
+    const actualType = htmlControlType(element);
+    const htmlName = element.getAttribute('name')?.trim();
+
+    if (actualType === 'radio') {
+      const radioControl = controls.find((control) => control.type === 'radio' && control.name === htmlName);
+      if (!radioControl) {
+        errors.push(`Radio control "${id}" is missing a controls[] radio group for name "${htmlName ?? ''}"`);
+      }
+      continue;
+    }
+
     const manifest = controlsById.get(id);
     if (!manifest) {
       errors.push(`HTML control "${id}" is missing from controls[]`);
       continue;
     }
 
-    const htmlName = element.getAttribute('name')?.trim();
     if (manifest.name && htmlName !== manifest.name) {
       errors.push(`Control "${id}" name mismatch: HTML is "${htmlName ?? ''}" but controls[] says "${manifest.name}"`);
     }
 
-    const actualType = htmlControlType(element);
     if (actualType && manifest.type !== actualType) {
       errors.push(`Control "${id}" type mismatch: HTML is "${actualType}" but controls[] says "${manifest.type}"`);
     }
   }
 
   for (const control of controls) {
+    if (control.type === 'radio') {
+      const selector = `input[type=\"radio\"][name=\"${CSS.escape(control.name ?? '')}\"]`;
+      if (!control.name || document.body.querySelectorAll(selector).length === 0) {
+        errors.push(`controls[] radio group "${control.id}" does not have matching HTML radio controls`);
+      }
+      continue;
+    }
+
     if (!htmlIds.has(control.id)) errors.push(`controls[] entry "${control.id}" does not have a matching HTML control`);
   }
 
@@ -377,8 +394,16 @@ export function formDataToValues(formData: FormData): Record<string, unknown> {
 }
 
 function valueForControl(control: BeadFormControl, element: HTMLElement): unknown {
+  if (control.type === 'radio') {
+    if (!control.name) return undefined;
+    const checked = element.closest('form')?.querySelector<HTMLInputElement>(
+      `input[type=\"radio\"][name=\"${CSS.escape(control.name)}\"]:checked`,
+    );
+    return checked?.value ?? '';
+  }
+
   if (element instanceof HTMLInputElement) {
-    if (control.type === 'checkbox' || control.type === 'radio') return element.checked;
+    if (control.type === 'checkbox') return element.checked;
     if (control.type === 'number' || control.type === 'range') return element.value === '' ? '' : Number(element.value);
     return element.value;
   }
@@ -396,7 +421,9 @@ export function formElementToValues(form: HTMLFormElement, controls?: BeadFormCo
   if (controls && controls.length > 0) {
     const values: Record<string, unknown> = {};
     for (const control of controls) {
-      const element = form.querySelector<HTMLElement>(`#${CSS.escape(control.id)}`);
+      const element = control.type === 'radio'
+        ? form.querySelector<HTMLElement>(`input[type=\"radio\"][name=\"${CSS.escape(control.name ?? '')}\"]`)
+        : form.querySelector<HTMLElement>(`#${CSS.escape(control.id)}`);
       if (!element) continue;
       const value = valueForControl(control, element);
       if (value !== undefined) values[control.id] = value;

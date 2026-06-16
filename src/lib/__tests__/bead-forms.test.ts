@@ -135,6 +135,25 @@ describe('bead HTML forms', () => {
     })).toContain('Control "ack" type mismatch: HTML is "checkbox" but controls[] says "text"');
   });
 
+
+  it('models radio controls as a string-valued group', () => {
+    const formDefinition = {
+      id: 'review',
+      title: 'Review',
+      html: '<form><label><input id="decision-approve" name="decision" type="radio" value="approve"> Approve</label><label><input id="decision-reject" name="decision" type="radio" value="reject" checked> Reject</label></form>',
+      controls: [{ id: 'decision', name: 'decision', type: 'radio' as const, required: true }],
+    };
+
+    expect(getFormControlManifestErrors(formDefinition)).toEqual([]);
+
+    document.body.innerHTML = formDefinition.html;
+    const form = document.querySelector('form')!;
+
+    expect(formElementToValues(form, formDefinition.controls)).toEqual({
+      decision: 'reject',
+    });
+  });
+
   it('uses unique identifiers when collecting checkbox values', () => {
     document.body.innerHTML = '<form><input id="reviewed" name="reviewed" type="checkbox" checked><input id="comment" name="comment" value="done"></form>';
     const form = document.querySelector('form')!;

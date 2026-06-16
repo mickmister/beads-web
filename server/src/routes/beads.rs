@@ -1001,6 +1001,37 @@ fn control_type(control: &serde_json::Value) -> &str {
         .unwrap_or("text")
 }
 
+fn is_valid_control_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn is_supported_control_type(control_type: &str) -> bool {
+    matches!(
+        control_type,
+        "checkbox"
+            | "date"
+            | "datetime-local"
+            | "email"
+            | "hidden"
+            | "month"
+            | "number"
+            | "password"
+            | "radio"
+            | "range"
+            | "search"
+            | "select"
+            | "tel"
+            | "text"
+            | "textarea"
+            | "time"
+            | "url"
+            | "week"
+    )
+}
+
 fn validate_control_manifest(form: &serde_json::Value) -> Result<(), String> {
     let controls = form_controls(form)?;
     if controls.is_empty() {
@@ -1011,6 +1042,13 @@ fn validate_control_manifest(form: &serde_json::Value) -> Result<(), String> {
     for control in controls {
         let id = control_id(control)
             .ok_or_else(|| "Each form control must declare a non-empty id".to_string())?;
+        if !is_valid_control_id(id) {
+            return Err(format!("Control \"{}\" has an invalid id", id));
+        }
+        let kind = control_type(control);
+        if !is_supported_control_type(kind) {
+            return Err(format!("Control \"{}\" has unsupported type \"{}\"", id, kind));
+        }
         if !seen.insert(id.to_string()) {
             return Err(format!("Duplicate control id \"{}\"", id));
         }
@@ -1033,11 +1071,18 @@ fn validate_value_for_control(
     value: &serde_json::Value,
 ) -> Result<(), String> {
     match control_type(control) {
-        "checkbox" | "radio" => {
+        "checkbox" => {
             if value.is_boolean() {
                 Ok(())
             } else {
-                Err("checkbox/radio values must be booleans".to_string())
+                Err("checkbox values must be booleans".to_string())
+            }
+        }
+        "radio" => {
+            if value.is_string() {
+                Ok(())
+            } else {
+                Err("radio values must be strings".to_string())
             }
         }
         "number" | "range" => {
@@ -2069,6 +2114,49 @@ mod tests {
         values.insert("comment".to_string(), serde_json::json!("LGTM"));
 
         validate_form_values(&form_metadata(), "review", &values).unwrap();
+    }
+
+
+    #[test]
+    fn test_validate_form_values_accepts_radio_group_value() {
+        let metadata = serde_json::json!({
+            "beadsWeb": {
+                "forms": [{
+                    "id": "review",
+                    "title": "Review",
+                    "html": "<form></form>",
+                    "controls": [
+                        { "id": "decision", "name": "decision", "type": "radio", "required": true }
+                    ]
+                }]
+            }
+        });
+        let mut values = serde_json::Map::new();
+        values.insert("decision".to_string(), serde_json::json!("approve"));
+
+        validate_form_values(&metadata, "review", &values).unwrap();
+    }
+
+    #[test]
+    fn test_validate_form_values_rejects_invalid_control_type() {
+        let metadata = serde_json::json!({
+            "beadsWeb": {
+                "forms": [{
+                    "id": "review",
+                    "title": "Review",
+                    "html": "<form></form>",
+                    "controls": [
+                        { "id": "comment", "name": "comment", "type": "not-real" }
+                    ]
+                }]
+            }
+        });
+        let mut values = serde_json::Map::new();
+        values.insert("comment".to_string(), serde_json::json!("hello"));
+
+        let err = validate_form_values(&metadata, "review", &values).unwrap_err();
+
+        assert!(err.contains("unsupported type"));
     }
 
     #[test]
