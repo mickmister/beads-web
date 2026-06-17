@@ -63,14 +63,20 @@ export interface WatchEvent {
 /**
  * Helper for fetch with error handling
  */
+function jsonHeaders(options?: RequestInit): HeadersInit {
+  const headers = { ...options?.headers } as Record<string, string>;
+  if (options?.body !== undefined && !Object.keys(headers).some((name) => name.toLowerCase() === 'content-type')) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
+}
+
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${getApiBase()}${path}`, {
+    credentials: 'include',
     ...options,
     signal: options?.signal ?? AbortSignal.timeout(10000),
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers: jsonHeaders(options),
   });
   if (!res.ok) {
     let detail = res.statusText;
@@ -498,7 +504,8 @@ export const update = {
 export const watch = {
   beads: (path: string, onEvent: (event: WatchEvent) => void) => {
     const eventSource = new EventSource(
-      `${getApiBase()}/api/watch/beads?path=${encodeURIComponent(path)}`
+      `${getApiBase()}/api/watch/beads?path=${encodeURIComponent(path)}`,
+      { withCredentials: true },
     );
     eventSource.onmessage = (e) => onEvent(JSON.parse(e.data));
     eventSource.onerror = () => eventSource.close();

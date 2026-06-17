@@ -55,6 +55,7 @@ export function UpdateBanner() {
           for (let i = 0; i < 20; i++) {
             try {
               await fetch(`${getApiBase()}/api/health`, {
+                credentials: 'include',
                 signal: AbortSignal.timeout(2000),
               });
               window.location.reload();
