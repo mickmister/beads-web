@@ -8,20 +8,20 @@ afterEach(() => {
 });
 
 describe('getApiBase', () => {
-  it('derives backend origin from forwarded port hosts', () => {
+  it('uses same-origin requests for forwarded port hosts by default', () => {
     expect(getApiBaseForLocation({
       protocol: 'https:',
       hostname: 'port-3017.jamtools.dev',
       port: '',
-    })).toBe('https://port-3018.jamtools.dev');
+    })).toBe('');
   });
 
-  it('derives backend origin from localhost dev ports', () => {
+  it('uses same-origin requests for localhost dev ports by default', () => {
     expect(getApiBaseForLocation({
       protocol: 'http:',
       hostname: 'localhost',
       port: '3007',
-    })).toBe('http://localhost:3008');
+    })).toBe('');
   });
 
   it('prefers explicit backend URL env var', async () => {
