@@ -42,8 +42,7 @@ async function fetchDesignDoc(path: string, projectPath: string): Promise<string
   const encodedPath = encodeURIComponent(path);
   const encodedProjectPath = encodeURIComponent(projectPath);
   const response = await fetch(
-    `${getApiBase()}/api/fs/read?path=${encodedPath}&project_path=${encodedProjectPath}`,
-    { credentials: 'include' },
+    `${getApiBase()}/api/fs/read?path=${encodedPath}&project_path=${encodedProjectPath}`
   );
   if (!response.ok) {
     throw new Error('Failed to fetch design doc: ' + response.statusText);

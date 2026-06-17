@@ -73,7 +73,6 @@ function jsonHeaders(options?: RequestInit): HeadersInit {
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${getApiBase()}${path}`, {
-    credentials: 'include',
     ...options,
     signal: options?.signal ?? AbortSignal.timeout(10000),
     headers: jsonHeaders(options),
@@ -504,8 +503,7 @@ export const update = {
 export const watch = {
   beads: (path: string, onEvent: (event: WatchEvent) => void) => {
     const eventSource = new EventSource(
-      `${getApiBase()}/api/watch/beads?path=${encodeURIComponent(path)}`,
-      { withCredentials: true },
+      `${getApiBase()}/api/watch/beads?path=${encodeURIComponent(path)}`
     );
     eventSource.onmessage = (e) => onEvent(JSON.parse(e.data));
     eventSource.onerror = () => eventSource.close();
