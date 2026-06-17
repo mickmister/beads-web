@@ -2,38 +2,192 @@ name: Release
 
 on:
   push:
+    branches:
+      - '**'
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to release (e.g., v1.0.0)'
-        required: true
+      beads_web_ref:
+        description: 'beads-web ref/SHA to build or look up. Defaults to the workflow ref.'
+        required: false
         type: string
+      force_rebuild:
+        description: 'Rebuild and republish even if the SHA-addressed release already has all required assets.'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-${{ github.event.inputs.beads_web_ref || github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      should_run: ${{ steps.prepare.outputs.should_run }}
+      assets_exist: ${{ steps.preflight.outputs.assets_exist }}
+      checkout_ref: ${{ steps.prepare.outputs.checkout_ref }}
+      target_commitish: ${{ steps.prepare.outputs.target_commitish }}
+      beads_web_sha: ${{ steps.prepare.outputs.beads_web_sha }}
+      release_tag: ${{ steps.prepare.outputs.release_tag }}
+      release_name: ${{ steps.prepare.outputs.release_name }}
+      release_body: ${{ steps.prepare.outputs.release_body }}
+      release_draft: ${{ steps.prepare.outputs.release_draft }}
+      release_prerelease: ${{ steps.prepare.outputs.release_prerelease }}
+      make_latest: ${{ steps.prepare.outputs.make_latest }}
+      generate_release_notes: ${{ steps.prepare.outputs.generate_release_notes }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      required_assets: ${{ steps.prepare.outputs.required_assets }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve ref and prepare release metadata
+        id: prepare
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BEADS_WEB_REF: ${{ github.event.inputs.beads_web_ref }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+
+          requested_ref="$GITHUB_SHA"
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "${INPUT_BEADS_WEB_REF:-}" ]]; then
+            requested_ref="$INPUT_BEADS_WEB_REF"
+          fi
+
+          if beads_web_sha="$(git rev-parse "${requested_ref}^{commit}" 2>/dev/null)"; then
+            :
+          elif beads_web_sha="$(git rev-parse "origin/${requested_ref}^{commit}" 2>/dev/null)"; then
+            :
+          else
+            echo "Unable to resolve beads-web ref/SHA: ${requested_ref}" >&2
+            exit 1
+          fi
+
+          short_sha="${beads_web_sha:0:12}"
+          release_tag="beads-web-assets-${beads_web_sha}"
+          release_name="beads-web assets (${short_sha})"
+          release_draft="true"
+          release_prerelease="true"
+          make_latest="false"
+          generate_release_notes="false"
+          full_release="false"
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" == v* && "$requested_ref" == "$GITHUB_SHA" ]]; then
+            release_tag="$GITHUB_REF_NAME"
+            release_name="$GITHUB_REF_NAME"
+            release_draft="false"
+            release_prerelease="false"
+            make_latest="true"
+            generate_release_notes="true"
+            full_release="true"
+          elif git branch -r --contains "$beads_web_sha" | grep -Eq '^[[:space:]]*origin/main$'; then
+            release_draft="false"
+            release_prerelease="false"
+          fi
+
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          echo "checkout_ref=$beads_web_sha" >> "$GITHUB_OUTPUT"
+          echo "target_commitish=$beads_web_sha" >> "$GITHUB_OUTPUT"
+          echo "beads_web_sha=$beads_web_sha" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
+          echo "release_draft=$release_draft" >> "$GITHUB_OUTPUT"
+          echo "release_prerelease=$release_prerelease" >> "$GITHUB_OUTPUT"
+          echo "make_latest=$make_latest" >> "$GITHUB_OUTPUT"
+          echo "generate_release_notes=$generate_release_notes" >> "$GITHUB_OUTPUT"
+          if [[ "$full_release" == "true" ]]; then
+            asset_description="Assets include standalone beads-web binaries for macOS, Linux, and Windows. Linux binaries are built on Ubuntu 22.04 runners for compatibility with Debian bookworm and newer glibc runtimes."
+            echo 'matrix={"include":[{"os":"macos-latest","target":"aarch64-apple-darwin","artifact":"beads-web-darwin-arm64"},{"os":"macos-latest","target":"x86_64-apple-darwin","artifact":"beads-web-darwin-x64"},{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","artifact":"beads-web-linux-x64"},{"os":"ubuntu-22.04-arm","target":"aarch64-unknown-linux-gnu","artifact":"beads-web-linux-arm64"},{"os":"windows-latest","target":"x86_64-pc-windows-msvc","artifact":"beads-web-win-x64.exe"}]}' >> "$GITHUB_OUTPUT"
+            echo 'required_assets<<EOF' >> "$GITHUB_OUTPUT"
+            printf '%s\n' \
+              'beads-web-darwin-arm64' \
+              'beads-web-darwin-x64' \
+              'beads-web-linux-x64' \
+              'beads-web-linux-arm64' \
+              'beads-web-win-x64.exe' >> "$GITHUB_OUTPUT"
+            echo 'EOF' >> "$GITHUB_OUTPUT"
+          else
+            asset_description="Per-commit release assets include only the standalone Linux x64 beads-web binary, built on Ubuntu 22.04 for compatibility with Debian bookworm and newer glibc runtimes. Tagged releases include all supported platforms."
+            echo 'matrix={"include":[{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","artifact":"beads-web-linux-x64"}]}' >> "$GITHUB_OUTPUT"
+            echo 'required_assets<<EOF' >> "$GITHUB_OUTPUT"
+            echo 'beads-web-linux-x64' >> "$GITHUB_OUTPUT"
+            echo 'EOF' >> "$GITHUB_OUTPUT"
+          fi
+          echo 'release_body<<EOF' >> "$GITHUB_OUTPUT"
+          cat <<EOF >> "$GITHUB_OUTPUT"
+          Release assets for beads-web commit ${beads_web_sha}.
+
+          Deterministic lookup tag: \`${release_tag}\`
+
+          ${asset_description}
+          EOF
+          echo 'EOF' >> "$GITHUB_OUTPUT"
+
+      - name: Preflight existing release assets
+        id: preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.prepare.outputs.release_tag }}
+          FORCE_REBUILD: ${{ github.event.inputs.force_rebuild || 'false' }}
+          REQUIRED_ASSETS: ${{ steps.prepare.outputs.required_assets }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$FORCE_REBUILD" == "true" ]]; then
+            echo "assets_exist=false" >> "$GITHUB_OUTPUT"
+            echo "force_rebuild=true; skipping preflight reuse"
+            exit 0
+          fi
+
+          if ! gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' > existing-assets.txt 2>/dev/null; then
+            echo "assets_exist=false" >> "$GITHUB_OUTPUT"
+            echo "release $RELEASE_TAG does not exist yet"
+            exit 0
+          fi
+
+          missing=0
+          while IFS= read -r asset; do
+            if [[ -z "$asset" ]]; then
+              continue
+            fi
+            if ! grep -Fxq "$asset" existing-assets.txt; then
+              echo "missing expected asset: $asset"
+              missing=1
+            fi
+          done <<< "$REQUIRED_ASSETS"
+
+          if [[ "$missing" -eq 0 ]]; then
+            echo "assets_exist=true" >> "$GITHUB_OUTPUT"
+            echo "all expected assets already exist for $RELEASE_TAG"
+          else
+            echo "assets_exist=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: prepare
+    if: needs.prepare.outputs.should_run == 'true' && needs.prepare.outputs.assets_exist != 'true'
     strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact: beads-web-darwin-arm64
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: beads-web-darwin-x64
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact: beads-web-linux-x64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: beads-web-win-x64.exe
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.checkout_ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -69,14 +223,43 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
+          retention-days: 1
 
   release:
-    needs: build
-    runs-on: ubuntu-latest
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should_run == 'true' && needs.prepare.outputs.assets_exist != 'true'
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
 
     steps:
+      - name: Checkout release target
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.target_commitish }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Ensure release tag exists
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TARGET_COMMITISH: ${{ needs.prepare.outputs.target_commitish }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" || true
+
+          if git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            echo "Release tag ${RELEASE_TAG} already exists."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${RELEASE_TAG}" "${TARGET_COMMITISH}"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${RELEASE_TAG}"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v7
         with:
@@ -88,10 +271,17 @@ jobs:
           find artifacts -type f -exec mv {} release/ \;
           ls -la release/
 
-      - name: Create Release
+      - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          name: ${{ inputs.version || github.ref_name }}
-          tag_name: ${{ inputs.version || github.ref_name }}
+          name: ${{ needs.prepare.outputs.release_name }}
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          target_commitish: ${{ needs.prepare.outputs.target_commitish }}
+          body: ${{ needs.prepare.outputs.release_body }}
+          draft: ${{ needs.prepare.outputs.release_draft == 'true' }}
+          prerelease: ${{ needs.prepare.outputs.release_prerelease == 'true' }}
+          make_latest: ${{ needs.prepare.outputs.make_latest }}
+          token: ${{ github.token }}
           files: release/*
-          generate_release_notes: true
+          generate_release_notes: ${{ needs.prepare.outputs.generate_release_notes == 'true' }}
+          overwrite_files: true
