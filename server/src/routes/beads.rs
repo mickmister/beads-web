@@ -107,6 +107,15 @@ pub struct BeadsParams {
     pub updated_after: Option<String>,
 }
 
+/// Response for resolving a bead ID to its containing project.
+#[derive(Debug, Serialize)]
+pub struct ResolveBeadProjectResponse {
+    #[serde(rename = "projectId")]
+    pub project_id: String,
+    #[serde(rename = "beadId")]
+    pub bead_id: String,
+}
+
 /// A dependency relationship in the JSONL file (old format).
 ///
 /// Old `bd` versions stored dependencies as:
@@ -652,6 +661,88 @@ pub async fn read_beads(
     (
         StatusCode::OK,
         Json(serde_json::json!({ "beads": beads, "source": source })),
+    )
+}
+
+/// GET /api/beads/resolve/:bead_id
+///
+/// Resolves a bead ID to the first active project that contains it. This is
+/// intentionally a fallback for external deep links that only know the bead ID;
+/// normal in-app navigation should continue linking with the project ID.
+pub async fn resolve_bead_project_handler(
+    Extension(dolt_manager): Extension<Arc<DoltManager>>,
+    Extension(db): Extension<Arc<Database>>,
+    axum::extract::Path(bead_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    let bead_id = bead_id.trim().to_string();
+    if bead_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "bead ID is required" })),
+        );
+    }
+
+    let projects = match db.get_projects_filtered(false) {
+        Ok(projects) => projects,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            );
+        }
+    };
+
+    for project in projects {
+        let path = project.path.replace('\\', "/");
+        let beads = if let Some(db_name) = path.strip_prefix(DOLT_PATH_PREFIX) {
+            if !dolt_manager.is_available() && !dolt_manager.check_server().await {
+                continue;
+            }
+            match dolt_manager.read_beads(db_name).await {
+                Ok(beads) => beads,
+                Err(e) => {
+                    tracing::debug!(
+                        "Failed to scan Dolt project {} while resolving bead {}: {}",
+                        project.id,
+                        bead_id,
+                        e
+                    );
+                    continue;
+                }
+            }
+        } else {
+            let project_path = PathBuf::from(&path);
+            if validate_path_security(&project_path).is_err() || !project_path.join(".beads").exists() {
+                continue;
+            }
+            match read_beads_from_cli(&project_path, None).await {
+                Ok(beads) => beads,
+                Err(e) => {
+                    tracing::debug!(
+                        "Failed to scan filesystem project {} while resolving bead {}: {}",
+                        project.id,
+                        bead_id,
+                        e
+                    );
+                    continue;
+                }
+            }
+        };
+
+        if beads.iter().any(|bead| bead.id == bead_id) {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!(ResolveBeadProjectResponse {
+                    project_id: project.id,
+                    bead_id,
+                })),
+            );
+        }
+    }
+
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({ "error": format!("No project contains bead {}", bead_id) })),
     )
 }
 

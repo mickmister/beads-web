@@ -34,6 +34,7 @@ import { useKeyboardNavigation } from "@/hooks/use-keyboard-navigation";
 import { useProject } from "@/hooks/use-project";
 import { useTheme } from "@/hooks/use-theme";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
+import * as api from "@/lib/api";
 import { isBlocked } from "@/lib/bead-utils";
 import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
 import { isDoltProject } from "@/lib/utils";
@@ -62,6 +63,39 @@ export default function KanbanBoard() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const projectId = searchParams.get('id');
+  const requestedBeadId = searchParams.get('bead')?.trim() || null;
+  const [resolvedProjectId, setResolvedProjectId] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+  const effectiveProjectId = projectId || resolvedProjectId;
+
+  useEffect(() => {
+    if (projectId || !requestedBeadId) {
+      setResolvedProjectId(null);
+      setResolveError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setResolveError(null);
+    api.beads.resolveProject(requestedBeadId)
+      .then(({ projectId: nextProjectId }) => {
+        if (cancelled) return;
+        setResolvedProjectId(nextProjectId);
+        const nextParams = new URLSearchParams(searchParams.toString());
+        nextParams.set('id', nextProjectId);
+        router.replace(`/project?${nextParams.toString()}`, { scroll: false });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.warn(`Failed to resolve project for bead ${requestedBeadId}:`, error);
+          setResolveError(error instanceof Error ? error.message : "Failed to resolve bead");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, requestedBeadId, router, searchParams]);
 
   // Fetch project data from SQLite
   const {
@@ -69,7 +103,7 @@ export default function KanbanBoard() {
     isLoading: projectLoading,
     error: projectError,
     refetch: refetchProject,
-  } = useProject(projectId);
+  } = useProject(effectiveProjectId);
 
   // Fetch beads from project path
   const {
@@ -206,6 +240,24 @@ export default function KanbanBoard() {
     navigateToBead,
   } = useBeadDetail(beads);
 
+  const closeBeadDetail = useCallback((open: boolean) => {
+    handleDetailOpenChange(open);
+
+    if (!open && requestedBeadId) {
+      const nextParams = new URLSearchParams(searchParams.toString());
+      nextParams.delete('bead');
+      const query = nextParams.toString();
+      router.replace(query ? `/project?${query}` : '/project', { scroll: false });
+    }
+  }, [handleDetailOpenChange, requestedBeadId, router, searchParams]);
+
+  useEffect(() => {
+    if (!requestedBeadId || beadsLoading || beads.length === 0) return;
+    if (detailBead?.id === requestedBeadId && isDetailOpen) return;
+
+    navigateToBead(requestedBeadId);
+  }, [beads.length, beadsLoading, detailBead?.id, isDetailOpen, navigateToBead, requestedBeadId]);
+
   // Ref for search input (keyboard navigation)
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -221,7 +273,7 @@ export default function KanbanBoard() {
       openBead(bead);
     },
     onClose: () => {
-      handleDetailOpenChange(false);
+      closeBeadDetail(false);
     },
     searchInputRef,
     isDetailOpen,
@@ -229,10 +281,10 @@ export default function KanbanBoard() {
 
   // Redirect if no project ID
   useEffect(() => {
-    if (!projectId) {
+    if (!projectId && !requestedBeadId) {
       router.replace("/");
     }
-  }, [projectId, router]);
+  }, [projectId, requestedBeadId, router]);
 
   /**
    * Handle navigation from Memory panel to a bead
@@ -243,10 +295,12 @@ export default function KanbanBoard() {
   }, [navigateToBead]);
 
   // Redirect state while no project ID
-  if (!projectId) {
+  if (!effectiveProjectId) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-surface-base">
-        <p className="text-t-muted">Redirecting…</p>
+        <p className={resolveError ? "text-danger" : "text-t-muted"}>
+          {resolveError || (requestedBeadId ? "Finding bead…" : "Redirecting…")}
+        </p>
       </div>
     );
   }
@@ -400,7 +454,7 @@ export default function KanbanBoard() {
           ticketNumber={ticketNumbers.get(detailBead.id)}
           worktreeStatus={isDoltOnly ? undefined : worktreeStatuses[detailBead.id]}
           open={isDetailOpen}
-          onOpenChange={handleDetailOpenChange}
+          onOpenChange={closeBeadDetail}
           projectPath={project?.path ?? ""}
           allBeads={beads}
           onChildClick={openBead}

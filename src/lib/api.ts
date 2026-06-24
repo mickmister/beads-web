@@ -169,6 +169,11 @@ export const beads = {
     return data;
   },
 
+  resolveProject: (beadId: string) =>
+    fetchApi<{ projectId: string; beadId: string }>(
+      `/api/beads/resolve/${encodeURIComponent(beadId)}`
+    ),
+
   create: (data: CreateBeadInput) => fetchApi<{ id: string }>('/api/beads/create', {
     method: 'POST',
     body: JSON.stringify(data),
