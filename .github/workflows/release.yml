@@ -110,21 +110,22 @@ jobs:
           echo "make_latest=$make_latest" >> "$GITHUB_OUTPUT"
           echo "generate_release_notes=$generate_release_notes" >> "$GITHUB_OUTPUT"
           if [[ "$full_release" == "true" ]]; then
-            asset_description="Assets include standalone beads-web binaries for macOS, Linux, and Windows. Linux binaries are built on Ubuntu 22.04 runners for compatibility with Debian bookworm and newer glibc runtimes."
-            echo 'matrix={"include":[{"os":"macos-latest","target":"aarch64-apple-darwin","artifact":"beads-web-darwin-arm64"},{"os":"macos-latest","target":"x86_64-apple-darwin","artifact":"beads-web-darwin-x64"},{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","artifact":"beads-web-linux-x64"},{"os":"ubuntu-22.04-arm","target":"aarch64-unknown-linux-gnu","artifact":"beads-web-linux-arm64"},{"os":"windows-latest","target":"x86_64-pc-windows-msvc","artifact":"beads-web-win-x64.exe"}]}' >> "$GITHUB_OUTPUT"
+            asset_description="Assets include standalone beads-web binaries for macOS and Linux. Linux binaries are built on Ubuntu 22.04 runners for compatibility with Debian bookworm and newer glibc runtimes."
+            echo 'matrix={"include":[{"os":"macos-latest","target":"aarch64-apple-darwin","artifact":"beads-web-darwin-arm64"},{"os":"macos-latest","target":"x86_64-apple-darwin","artifact":"beads-web-darwin-x64"},{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","artifact":"beads-web-linux-x64"},{"os":"ubuntu-22.04-arm","target":"aarch64-unknown-linux-gnu","artifact":"beads-web-linux-arm64"}]}' >> "$GITHUB_OUTPUT"
             echo 'required_assets<<EOF' >> "$GITHUB_OUTPUT"
             printf '%s\n' \
               'beads-web-darwin-arm64' \
               'beads-web-darwin-x64' \
               'beads-web-linux-x64' \
-              'beads-web-linux-arm64' \
-              'beads-web-win-x64.exe' >> "$GITHUB_OUTPUT"
+              'beads-web-linux-arm64' >> "$GITHUB_OUTPUT"
             echo 'EOF' >> "$GITHUB_OUTPUT"
           else
-            asset_description="Per-commit release assets include only the standalone Linux x64 beads-web binary, built on Ubuntu 22.04 for compatibility with Debian bookworm and newer glibc runtimes. Tagged releases include all supported platforms."
-            echo 'matrix={"include":[{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","artifact":"beads-web-linux-x64"}]}' >> "$GITHUB_OUTPUT"
+            asset_description="Per-commit release assets include standalone macOS arm64 and Linux x64 beads-web binaries. Linux binaries are built on Ubuntu 22.04 for compatibility with Debian bookworm and newer glibc runtimes. Tagged releases include all supported macOS and Linux platforms."
+            echo 'matrix={"include":[{"os":"macos-latest","target":"aarch64-apple-darwin","artifact":"beads-web-darwin-arm64"},{"os":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu","artifact":"beads-web-linux-x64"}]}' >> "$GITHUB_OUTPUT"
             echo 'required_assets<<EOF' >> "$GITHUB_OUTPUT"
-            echo 'beads-web-linux-x64' >> "$GITHUB_OUTPUT"
+            printf '%s\n' \
+              'beads-web-darwin-arm64' \
+              'beads-web-linux-x64' >> "$GITHUB_OUTPUT"
             echo 'EOF' >> "$GITHUB_OUTPUT"
           fi
           release_body_file="$(mktemp)"
