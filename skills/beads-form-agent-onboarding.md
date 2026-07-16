@@ -4,12 +4,16 @@ Use BeadsForm when you need structured answers from a human before proceeding. P
 
 ## 1. Start the preview/dev server
 
+Run the preview/dev server inside `tmux` so it stays alive after your shell command exits. Use one shared server per workspace; do not start a separate preview server per agent.
+
 From the VD worktree for this branch:
 
 ```bash
 cd /var/tmp/vibe-kanban/worktrees/beadsform-next/vibe-kanban-vscode-web
 pnpm install --frozen-lockfile   # only if node_modules is missing
-npm run dev:beads-form-preview -- --folder /tmp/beads-form-preview --port 55123 --server-port 55124 --host https://port-55123.jamtools.dev
+mkdir -p /tmp/beads-form-preview
+tmux new-session -d -s beadsform-shared-preview-55123 \
+  'npm run dev:beads-form-preview -- --folder /tmp/beads-form-preview --port 55123 --server-port 55124 --host https://port-55123.jamtools.dev 2>&1 | tee /tmp/beadsform-shared-preview-55123.log'
 ```
 
 The preview command disables browser auto-reload by default (`BEADS_FORM_DISABLE_HMR=1`) so code changes do not wipe active answers. Manual browser refresh still loads the latest code.
@@ -18,6 +22,23 @@ Shared URL base:
 
 ```txt
 https://port-55123.jamtools.dev
+```
+
+Useful tmux/log commands:
+
+```bash
+tmux ls
+tmux capture-pane -t beadsform-shared-preview-55123 -p -S -120
+tail -80 /tmp/beadsform-shared-preview-55123.log
+```
+
+To restart the shared preview server after intentional server-side changes:
+
+```bash
+tmux kill-session -t beadsform-shared-preview-55123
+cd /var/tmp/vibe-kanban/worktrees/beadsform-next/vibe-kanban-vscode-web
+tmux new-session -d -s beadsform-shared-preview-55123 \
+  'npm run dev:beads-form-preview -- --folder /tmp/beads-form-preview --port 55123 --server-port 55124 --host https://port-55123.jamtools.dev 2>&1 | tee /tmp/beadsform-shared-preview-55123.log'
 ```
 
 ## 2. Create a form JSON
