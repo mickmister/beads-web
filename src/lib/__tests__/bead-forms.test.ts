@@ -51,6 +51,77 @@ describe('bead HTML forms', () => {
     expect(forms[0].html).toContain('<form>');
   });
 
+  it('extracts forms from current beadForms metadata', () => {
+    const bead: Bead = {
+      ...baseBead,
+      metadata: {
+        beadForms: {
+          forms: [
+            {
+              id: 'review',
+              title: 'Review',
+              html: '<form><textarea name="comment"></textarea></form>',
+              controls: [{ id: 'comment', name: 'comment', type: 'textarea' }],
+            },
+          ],
+        },
+      },
+    };
+
+    expect(getBeadForms(bead)[0].id).toBe('review');
+  });
+
+  it('appends split responses for current beadForms metadata', () => {
+    const metadata = {
+      beadForms: {
+        forms: [
+          {
+            id: 'review',
+            title: 'Review',
+            html: '<form><textarea name="comment"></textarea></form>',
+            controls: [{ id: 'comment', name: 'comment', type: 'textarea' }],
+          },
+        ],
+      },
+    };
+
+    const next = mergeFormResponse(metadata, 'review', { comment: 'new' }, '2026-06-07T00:00:00Z');
+
+    expect((next as any).beadForms.forms[0].responses).toBeUndefined();
+    expect((next as any).beadFormResponses.responsesByFormId.review).toEqual([
+      { submittedBy: 'user', submittedAt: '2026-06-07T00:00:00Z', values: { comment: 'new' } },
+    ]);
+  });
+
+  it('joins split response storage onto matching forms', () => {
+    const bead: Bead = {
+      ...baseBead,
+      metadata: {
+        beadsWeb: {
+          forms: [
+            {
+              id: 'review',
+              title: 'Review',
+              html: '<form><textarea name="comment"></textarea></form>',
+              controls: [{ id: 'comment', name: 'comment', type: 'textarea' }],
+            },
+          ],
+        },
+        beadFormResponses: {
+          responsesByFormId: {
+            review: [
+              { submittedBy: 'user', submittedAt: '2026-06-07T00:00:00Z', values: { comment: 'LGTM' } },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(getBeadForms(bead)[0].responses).toEqual([
+      { submittedBy: 'user', submittedAt: '2026-06-07T00:00:00Z', values: { comment: 'LGTM' } },
+    ]);
+  });
+
   it('ignores legacy block DSL-only forms', () => {
     const bead: Bead = {
       ...baseBead,
@@ -196,18 +267,24 @@ describe('bead HTML forms', () => {
             title: 'Review',
             html: '<form><textarea name="comment"></textarea></form>',
             controls: [{ id: 'comment', name: 'comment', type: 'textarea' }],
-            responses: [{ submittedBy: 'user', submittedAt: 'old', values: { comment: 'old' } }],
           },
         ],
+      },
+      beadFormResponses: {
+        responsesByFormId: {
+          review: [{ submittedBy: 'user', submittedAt: 'old', values: { comment: 'old' } }],
+        },
       },
     };
 
     const next = mergeFormResponse(metadata, 'review', { comment: 'new' }, '2026-06-07T00:00:00Z', 'user', '**Thanks**');
     const form = (next as any).beadsWeb.forms[0];
+    const responses = (next as any).beadFormResponses.responsesByFormId.review;
 
     expect((next as any).untouched).toBe(true);
-    expect(form.responses).toHaveLength(2);
-    expect(form.responses[1]).toEqual({
+    expect(form.responses).toBeUndefined();
+    expect(responses).toHaveLength(2);
+    expect(responses[1]).toEqual({
       submittedBy: 'user',
       submittedAt: '2026-06-07T00:00:00Z',
       values: { comment: 'new' },

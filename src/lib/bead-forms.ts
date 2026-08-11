@@ -54,6 +54,10 @@ export const BeadsWebMetadataSchema = z.object({
   forms: z.array(BeadFormSchema).optional(),
 }).passthrough();
 
+export const BeadFormResponsesMetadataSchema = z.object({
+  responsesByFormId: z.record(z.string(), z.array(BeadFormResponseSchema)).optional(),
+}).passthrough();
+
 export type BeadForm = z.infer<typeof BeadFormSchema>;
 export type BeadFormControl = z.infer<typeof BeadFormControlSchema>;
 export type BeadFormResponse = z.infer<typeof BeadFormResponseSchema>;
@@ -113,6 +117,7 @@ const SAFE_CSS_PROPERTIES = new Set([
 ]);
 
 const UNSAFE_CSS_VALUE = /url\s*\(|expression\s*\(|@import|behavior\s*:|javascript:/i;
+const FORM_METADATA_KEYS = ['beadForms', 'beadsWeb'] as const;
 
 function isObject(value: unknown): value is JsonObject {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -369,12 +374,31 @@ export function applyFormLiveValues(html: string, liveValues: FormLiveValues): s
 
 export function getBeadForms(bead: Pick<Bead, 'metadata'>): BeadForm[] {
   const metadata = bead.metadata;
-  if (!isObject(metadata) || !isObject(metadata.beadsWeb)) return [];
+  if (!isObject(metadata)) return [];
 
-  const parsed = BeadsWebMetadataSchema.safeParse(metadata.beadsWeb);
+  const formRoot = FORM_METADATA_KEYS
+    .map((key) => metadata[key])
+    .find((candidate) => isObject(candidate));
+  if (!isObject(formRoot)) return [];
+
+  const parsed = BeadsWebMetadataSchema.safeParse(formRoot);
   if (!parsed.success) return [];
 
-  return parsed.data.forms ?? [];
+  const forms = parsed.data.forms ?? [];
+  if (!isObject(metadata.beadFormResponses)) return forms;
+
+  const parsedResponses = BeadFormResponsesMetadataSchema.safeParse(metadata.beadFormResponses);
+  if (!parsedResponses.success) return forms;
+  const responsesByFormId = parsedResponses.data.responsesByFormId ?? {};
+
+  return forms.map((form) => {
+    const splitResponses = responsesByFormId[form.id];
+    if (!splitResponses) return form;
+    return {
+      ...form,
+      responses: splitResponses,
+    };
+  });
 }
 
 export function formDataToValues(formData: FormData): Record<string, unknown> {
@@ -459,11 +483,13 @@ export function setFormLiveValues(
   liveValues: FormLiveValues,
 ): JsonObject {
   const next: JsonObject = isObject(metadata) ? structuredClone(metadata) as JsonObject : {};
-  if (!isObject(next.beadsWeb)) next.beadsWeb = {};
-  const beadsWeb = next.beadsWeb as JsonObject;
-  if (!Array.isArray(beadsWeb.forms)) beadsWeb.forms = [];
+  const formRootKey = FORM_METADATA_KEYS.find((key) => isObject(next[key]) && Array.isArray((next[key] as JsonObject).forms))
+    ?? 'beadForms';
+  if (!isObject(next[formRootKey])) next[formRootKey] = {};
+  const formRoot = next[formRootKey] as JsonObject;
+  if (!Array.isArray(formRoot.forms)) formRoot.forms = [];
 
-  const forms = beadsWeb.forms as unknown[];
+  const forms = formRoot.forms as unknown[];
   const form = forms.find((candidate: unknown) => isObject(candidate) && candidate.id === formId);
   if (!isObject(form)) {
     throw new Error(`Form not found: ${formId}`);
@@ -483,18 +509,24 @@ export function mergeFormResponse(
   webhookMarkdown?: string
 ): JsonObject {
   const next: JsonObject = isObject(metadata) ? structuredClone(metadata) as JsonObject : {};
-  if (!isObject(next.beadsWeb)) next.beadsWeb = {};
-  const beadsWeb = next.beadsWeb as JsonObject;
-  if (!Array.isArray(beadsWeb.forms)) beadsWeb.forms = [];
+  const formRootKey = FORM_METADATA_KEYS.find((key) => isObject(next[key]) && Array.isArray((next[key] as JsonObject).forms))
+    ?? 'beadForms';
+  if (!isObject(next[formRootKey])) next[formRootKey] = {};
+  const formRoot = next[formRootKey] as JsonObject;
+  if (!Array.isArray(formRoot.forms)) formRoot.forms = [];
 
-  const forms = beadsWeb.forms as unknown[];
+  const forms = formRoot.forms as unknown[];
   const form = forms.find((candidate: unknown) => isObject(candidate) && candidate.id === formId);
   if (!isObject(form)) {
     throw new Error(`Form not found: ${formId}`);
   }
 
-  if (!Array.isArray(form.responses)) form.responses = [];
-  const responses = form.responses as unknown[];
+  if (!isObject(next.beadFormResponses)) next.beadFormResponses = {};
+  const beadFormResponses = next.beadFormResponses as JsonObject;
+  if (!isObject(beadFormResponses.responsesByFormId)) beadFormResponses.responsesByFormId = {};
+  const responsesByFormId = beadFormResponses.responsesByFormId as JsonObject;
+  if (!Array.isArray(responsesByFormId[formId])) responsesByFormId[formId] = [];
+  const responses = responsesByFormId[formId] as unknown[];
   const response: BeadFormResponse = { submittedBy, submittedAt, values };
   if (webhookMarkdown) response.webhookMarkdown = webhookMarkdown;
   responses.push(response);

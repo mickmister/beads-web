@@ -24,6 +24,15 @@ use super::validate_path_security;
 use crate::db::{CachedCounts, Database};
 use crate::dolt::{self, DoltManager};
 
+/// Conservative application guard for a complete bead issue metadata JSON
+/// document. Bead issue metadata is stored in Dolt's `issues.metadata JSON`
+/// column, not the global `metadata.value TEXT` table, so valid bead metadata
+/// can exceed 64 KiB. This guard is intentionally much higher than the legacy
+/// TEXT size and exists to keep accidental multi-megabyte form payloads from
+/// becoming slow or exceeding database packet limits.
+const DEFAULT_BEAD_METADATA_JSON_MAX_BYTES: usize = 16 * 1024 * 1024;
+const FORM_METADATA_KEYS: [&str; 2] = ["beadForms", "beadsWeb"];
+
 /// Resolves the Dolt server port for a project.
 /// Tries dolt-server.port file first, falls back to parsing dolt-server.log.
 pub fn resolve_dolt_port(beads_dir: &std::path::Path) -> Option<u16> {
@@ -712,7 +721,9 @@ pub async fn resolve_bead_project_handler(
             }
         } else {
             let project_path = PathBuf::from(&path);
-            if validate_path_security(&project_path).is_err() || !project_path.join(".beads").exists() {
+            if validate_path_security(&project_path).is_err()
+                || !project_path.join(".beads").exists()
+            {
                 continue;
             }
             match read_beads_from_cli(&project_path, None).await {
@@ -1059,16 +1070,21 @@ fn find_form<'a>(
     metadata: &'a serde_json::Value,
     form_id: &str,
 ) -> Result<&'a serde_json::Value, String> {
-    metadata
-        .get("beadsWeb")
-        .and_then(|beads_web| beads_web.get("forms"))
-        .and_then(|forms| forms.as_array())
-        .and_then(|forms| {
-            forms
-                .iter()
-                .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
-        })
-        .ok_or_else(|| format!("Form not found: {}", form_id))
+    for key in FORM_METADATA_KEYS {
+        if let Some(form) = metadata
+            .get(key)
+            .and_then(|beads_web| beads_web.get("forms"))
+            .and_then(|forms| forms.as_array())
+            .and_then(|forms| {
+                forms.iter().find(|candidate| {
+                    candidate.get("id").and_then(|id| id.as_str()) == Some(form_id)
+                })
+            })
+        {
+            return Ok(form);
+        }
+    }
+    Err(format!("Form not found: {}", form_id))
 }
 
 fn form_controls(form: &serde_json::Value) -> Result<&Vec<serde_json::Value>, String> {
@@ -1138,7 +1154,10 @@ fn validate_control_manifest(form: &serde_json::Value) -> Result<(), String> {
         }
         let kind = control_type(control);
         if !is_supported_control_type(kind) {
-            return Err(format!("Control \"{}\" has unsupported type \"{}\"", id, kind));
+            return Err(format!(
+                "Control \"{}\" has unsupported type \"{}\"",
+                id, kind
+            ));
         }
         if !seen.insert(id.to_string()) {
             return Err(format!("Duplicate control id \"{}\"", id));
@@ -1272,13 +1291,10 @@ fn validate_form_values(
     Ok(())
 }
 
-fn append_form_response(
-    metadata: &mut serde_json::Value,
+fn split_form_responses_mut<'a>(
+    metadata: &'a mut serde_json::Value,
     form_id: &str,
-    values: serde_json::Map<String, serde_json::Value>,
-    submitted_at: &str,
-    webhook_markdown: Option<&str>,
-) -> Result<(), String> {
+) -> Result<&'a mut Vec<serde_json::Value>, String> {
     if !metadata.is_object() {
         *metadata = serde_json::json!({});
     }
@@ -1286,37 +1302,82 @@ fn append_form_response(
     let root = metadata
         .as_object_mut()
         .ok_or_else(|| "Metadata must be an object".to_string())?;
-    let beads_web = root
-        .entry("beadsWeb".to_string())
+    let response_root = root
+        .entry("beadFormResponses".to_string())
         .or_insert_with(|| serde_json::json!({}));
-    if !beads_web.is_object() {
-        *beads_web = serde_json::json!({});
+    if !response_root.is_object() {
+        *response_root = serde_json::json!({});
     }
-    let beads_web_obj = beads_web
+    let response_root_obj = response_root
         .as_object_mut()
-        .ok_or_else(|| "beadsWeb metadata must be an object".to_string())?;
-    let forms_value = beads_web_obj
-        .entry("forms".to_string())
+        .ok_or_else(|| "beadFormResponses metadata must be an object".to_string())?;
+    let responses_by_form_id = response_root_obj
+        .entry("responsesByFormId".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !responses_by_form_id.is_object() {
+        *responses_by_form_id = serde_json::json!({});
+    }
+    let responses_by_form_id_obj = responses_by_form_id
+        .as_object_mut()
+        .ok_or_else(|| "beadFormResponses.responsesByFormId must be an object".to_string())?;
+    let responses_value = responses_by_form_id_obj
+        .entry(form_id.to_string())
         .or_insert_with(|| serde_json::json!([]));
-    let forms = forms_value
+    responses_value
         .as_array_mut()
-        .ok_or_else(|| "beadsWeb.forms must be an array".to_string())?;
+        .ok_or_else(|| format!("Responses for form \"{}\" must be an array", form_id))
+}
 
+fn inline_form_responses_mut<'a>(
+    metadata: &'a mut serde_json::Value,
+    form_id: &str,
+) -> Result<&'a mut Vec<serde_json::Value>, String> {
+    let forms = forms_array_mut(metadata, form_id)?;
     let form = forms
         .iter_mut()
         .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
         .ok_or_else(|| format!("Form not found: {}", form_id))?;
-
     let form_obj = form
         .as_object_mut()
         .ok_or_else(|| "Form metadata must be an object".to_string())?;
     let responses_value = form_obj
         .entry("responses".to_string())
         .or_insert_with(|| serde_json::json!([]));
-    let responses = responses_value
+    responses_value
         .as_array_mut()
-        .ok_or_else(|| "Form responses must be an array".to_string())?;
+        .ok_or_else(|| "Form responses must be an array".to_string())
+}
 
+fn forms_array_mut<'a>(
+    metadata: &'a mut serde_json::Value,
+    form_id: &str,
+) -> Result<&'a mut Vec<serde_json::Value>, String> {
+    for key in FORM_METADATA_KEYS {
+        let has_form = metadata
+            .get(key)
+            .and_then(|form_root| form_root.get("forms"))
+            .and_then(|forms| forms.as_array())
+            .is_some_and(|forms| {
+                forms.iter().any(|candidate| {
+                    candidate.get("id").and_then(|id| id.as_str()) == Some(form_id)
+                })
+            });
+        if has_form {
+            return metadata
+                .get_mut(key)
+                .and_then(|form_root| form_root.get_mut("forms"))
+                .and_then(|forms| forms.as_array_mut())
+                .ok_or_else(|| format!("{}.forms must be an array", key));
+        }
+    }
+    Err(format!("Form not found: {}", form_id))
+}
+
+fn make_form_response(
+    values: serde_json::Map<String, serde_json::Value>,
+    submitted_at: &str,
+    webhook_markdown: Option<&str>,
+) -> serde_json::Value {
     let mut response = serde_json::Map::new();
     response.insert(
         "submittedBy".to_string(),
@@ -1333,8 +1394,44 @@ fn append_form_response(
             serde_json::Value::String(markdown.to_string()),
         );
     }
-    responses.push(serde_json::Value::Object(response));
+    serde_json::Value::Object(response)
+}
+
+fn append_form_response(
+    metadata: &mut serde_json::Value,
+    form_id: &str,
+    values: serde_json::Map<String, serde_json::Value>,
+    submitted_at: &str,
+    webhook_markdown: Option<&str>,
+) -> Result<(), String> {
+    find_form(metadata, form_id)?;
+    split_form_responses_mut(metadata, form_id)?.push(make_form_response(
+        values,
+        submitted_at,
+        webhook_markdown,
+    ));
     Ok(())
+}
+
+fn metadata_json_size(metadata: &serde_json::Value) -> Result<usize, String> {
+    serde_json::to_string(metadata)
+        .map(|json| json.len())
+        .map_err(|e| format!("Invalid metadata: {}", e))
+}
+
+fn ensure_metadata_json_under_limit(
+    metadata: &serde_json::Value,
+    max_bytes: usize,
+) -> Result<(), String> {
+    let size = metadata_json_size(metadata)?;
+    if size > max_bytes {
+        Err(format!(
+            "Bead JSON metadata is too large for the configured BeadsForm performance guard ({} > {} bytes). The bead issue metadata column is JSON, not the global metadata TEXT table; reduce form/response payload size or raise the app guard before retrying.",
+            size, max_bytes
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn set_form_live_value(
@@ -1366,11 +1463,7 @@ fn set_form_live_value(
         return Err("Live checkbox values must be booleans".to_string());
     }
 
-    let forms = metadata
-        .get_mut("beadsWeb")
-        .and_then(|beads_web| beads_web.get_mut("forms"))
-        .and_then(|forms| forms.as_array_mut())
-        .ok_or_else(|| "beadsWeb.forms must be an array".to_string())?;
+    let forms = forms_array_mut(metadata, form_id)?;
     let form = forms
         .iter_mut()
         .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
@@ -1397,19 +1490,16 @@ fn attach_form_response_webhook_markdown(
     submitted_at: &str,
     markdown: &str,
 ) -> Result<(), String> {
-    let forms = metadata
-        .get_mut("beadsWeb")
-        .and_then(|beads_web| beads_web.get_mut("forms"))
-        .and_then(|forms| forms.as_array_mut())
-        .ok_or_else(|| "beadsWeb.forms must be an array".to_string())?;
-    let form = forms
-        .iter_mut()
-        .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
-        .ok_or_else(|| format!("Form not found: {}", form_id))?;
-    let responses = form
-        .get_mut("responses")
-        .and_then(|responses| responses.as_array_mut())
-        .ok_or_else(|| "Form responses must be an array".to_string())?;
+    let split_responses_exist = metadata
+        .get("beadFormResponses")
+        .and_then(|root| root.get("responsesByFormId"))
+        .and_then(|by_form| by_form.get(form_id))
+        .is_some();
+    let responses = if split_responses_exist {
+        split_form_responses_mut(metadata, form_id)?
+    } else {
+        inline_form_responses_mut(metadata, form_id)?
+    };
     let response = responses
         .iter_mut()
         .rev()
@@ -1633,6 +1723,16 @@ pub async fn submit_bead_form_handler(
             .into_response();
     }
 
+    if let Err(e) =
+        ensure_metadata_json_under_limit(&metadata, DEFAULT_BEAD_METADATA_JSON_MAX_BYTES)
+    {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    }
+
     if let Err((status, error)) =
         persist_bead_metadata(&dolt_manager, &req.path, &req.id, &metadata).await
     {
@@ -1676,6 +1776,16 @@ pub async fn submit_bead_form_handler(
         ) {
             tracing::warn!("Failed to attach webhook markdown: {}", e);
         } else {
+            if let Err(e) =
+                ensure_metadata_json_under_limit(&metadata, DEFAULT_BEAD_METADATA_JSON_MAX_BYTES)
+            {
+                tracing::warn!("{}", e);
+                return (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    Json(serde_json::json!({ "error": e })),
+                )
+                    .into_response();
+            }
             if let Err((_, e)) =
                 persist_bead_metadata(&dolt_manager, &req.path, &req.id, &metadata).await
             {
@@ -1730,6 +1840,16 @@ pub async fn update_form_live_value_handler(
             .into_response();
     }
 
+    if let Err(e) =
+        ensure_metadata_json_under_limit(&metadata, DEFAULT_BEAD_METADATA_JSON_MAX_BYTES)
+    {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response();
+    }
+
     match persist_bead_metadata(&dolt_manager, &req.path, &req.id, &metadata).await {
         Ok(()) => Json(serde_json::json!({ "success": true })).into_response(),
         Err((status, error)) => {
@@ -1776,6 +1896,14 @@ pub async fn update_bead_metadata_handler(
             );
         }
     };
+    if let Err(e) =
+        ensure_metadata_json_under_limit(&metadata_value, DEFAULT_BEAD_METADATA_JSON_MAX_BYTES)
+    {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(serde_json::json!({ "error": e })),
+        );
+    }
 
     if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
         if !dolt_manager.is_available() && !dolt_manager.check_server().await {
@@ -2021,7 +2149,7 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
             Ok(value) => {
                 // Skip non-issue service records (e.g. `bd remember` memories),
                 // but keep them in raw_lines for lossless write-back.
-                if value.as_object().map_or(false, |o| o.contains_key("_type")) {
+                if value.as_object().is_some_and(|o| o.contains_key("_type")) {
                     raw_lines.push(value);
                     continue;
                 }
@@ -2174,6 +2302,22 @@ mod tests {
         })
     }
 
+    fn current_form_metadata() -> serde_json::Value {
+        serde_json::json!({
+            "beadForms": {
+                "forms": [{
+                    "id": "review",
+                    "title": "Review",
+                    "html": "<form></form>",
+                    "controls": [
+                        { "id": "ack", "name": "ack", "type": "checkbox", "live": true },
+                        { "id": "comment", "name": "comment", "type": "textarea", "required": true }
+                    ]
+                }]
+            }
+        })
+    }
+
     #[test]
     fn test_validate_form_values_rejects_unknown_fields() {
         let mut values = serde_json::Map::new();
@@ -2207,6 +2351,14 @@ mod tests {
         validate_form_values(&form_metadata(), "review", &values).unwrap();
     }
 
+    #[test]
+    fn test_validate_form_values_accepts_current_bead_forms_key() {
+        let mut values = serde_json::Map::new();
+        values.insert("ack".to_string(), serde_json::json!(true));
+        values.insert("comment".to_string(), serde_json::json!("LGTM"));
+
+        validate_form_values(&current_form_metadata(), "review", &values).unwrap();
+    }
 
     #[test]
     fn test_validate_form_values_accepts_radio_group_value() {
@@ -2261,6 +2413,108 @@ mod tests {
             serde_json::json!(true)
         );
         assert!(metadata["beadsWeb"]["forms"][0]["responses"].is_null());
+    }
+
+    #[test]
+    fn test_append_form_response_uses_split_response_storage() {
+        let mut metadata = form_metadata();
+        let mut values = serde_json::Map::new();
+        values.insert("comment".to_string(), serde_json::json!("new"));
+
+        append_form_response(
+            &mut metadata,
+            "review",
+            values,
+            "2026-06-07T00:00:00Z",
+            Some("**Thanks**"),
+        )
+        .unwrap();
+
+        assert!(metadata["beadsWeb"]["forms"][0]["responses"].is_null());
+        assert_eq!(
+            metadata["beadFormResponses"]["responsesByFormId"]["review"][0],
+            serde_json::json!({
+                "submittedBy": "user",
+                "submittedAt": "2026-06-07T00:00:00Z",
+                "values": { "comment": "new" },
+                "webhookMarkdown": "**Thanks**"
+            })
+        );
+    }
+
+    #[test]
+    fn test_append_form_response_supports_current_bead_forms_key() {
+        let mut metadata = current_form_metadata();
+        let mut values = serde_json::Map::new();
+        values.insert("comment".to_string(), serde_json::json!("new"));
+
+        append_form_response(
+            &mut metadata,
+            "review",
+            values,
+            "2026-06-07T00:00:00Z",
+            None,
+        )
+        .unwrap();
+
+        assert!(metadata["beadForms"]["forms"][0]["responses"].is_null());
+        assert_eq!(
+            metadata["beadFormResponses"]["responsesByFormId"]["review"][0]["values"],
+            serde_json::json!({ "comment": "new" })
+        );
+    }
+
+    #[test]
+    fn test_metadata_json_guard_does_not_apply_legacy_text_limit() {
+        let metadata_80k = serde_json::json!({
+            "beadsWeb": {
+                "forms": [{
+                    "id": "review",
+                    "title": "Review",
+                    "html": "<form></form>",
+                    "controls": [{ "id": "comment", "name": "comment", "type": "textarea" }],
+                    "description": "x".repeat(80 * 1024)
+                }]
+            }
+        });
+        let metadata_275k = serde_json::json!({
+            "beadsWeb": {
+                "forms": [{
+                    "id": "review",
+                    "title": "Review",
+                    "html": "<form></form>",
+                    "controls": [{ "id": "comment", "name": "comment", "type": "textarea" }],
+                    "description": "x".repeat(275 * 1024)
+                }]
+            }
+        });
+
+        ensure_metadata_json_under_limit(&metadata_80k, DEFAULT_BEAD_METADATA_JSON_MAX_BYTES)
+            .unwrap();
+        ensure_metadata_json_under_limit(&metadata_275k, DEFAULT_BEAD_METADATA_JSON_MAX_BYTES)
+            .unwrap();
+        assert!(metadata_json_size(&metadata_80k).unwrap() > 65_535);
+        assert!(metadata_json_size(&metadata_275k).unwrap() > 65_535);
+    }
+
+    #[test]
+    fn test_metadata_json_guard_reports_configured_app_limit() {
+        let metadata = serde_json::json!({
+            "beadsWeb": {
+                "forms": [{
+                    "id": "review",
+                    "title": "Review",
+                    "html": "<form></form>",
+                    "controls": [{ "id": "comment", "name": "comment", "type": "textarea" }],
+                    "description": "x".repeat(256)
+                }]
+            }
+        });
+
+        let err = ensure_metadata_json_under_limit(&metadata, 128).unwrap_err();
+
+        assert!(err.contains("Bead JSON metadata is too large"));
+        assert!(err.contains("JSON, not the global metadata TEXT table"));
     }
 
     #[test]
