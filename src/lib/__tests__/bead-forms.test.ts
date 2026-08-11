@@ -291,4 +291,31 @@ describe('bead HTML forms', () => {
       webhookMarkdown: '**Thanks**',
     });
   });
+
+  it('seeds split response storage from legacy inline responses and compacts the form', () => {
+    const metadata = {
+      beadForms: {
+        forms: [
+          {
+            id: 'review',
+            title: 'Review',
+            html: '<form><textarea name="comment"></textarea></form>',
+            controls: [{ id: 'comment', name: 'comment', type: 'textarea' }],
+            responses: [
+              { submittedBy: 'user', submittedAt: 'old', values: { comment: 'old' } },
+            ],
+          },
+        ],
+      },
+    };
+
+    const next = mergeFormResponse(metadata, 'review', { comment: 'new' }, '2026-06-07T00:00:00Z');
+
+    expect((next as any).beadForms.forms[0].responses).toBeUndefined();
+    expect((next as any).beadFormResponses.responsesByFormId.review).toEqual([
+      { submittedBy: 'user', submittedAt: 'old', values: { comment: 'old' } },
+      { submittedBy: 'user', submittedAt: '2026-06-07T00:00:00Z', values: { comment: 'new' } },
+    ]);
+    expect(getBeadForms({ ...baseBead, metadata: next })[0].responses).toHaveLength(2);
+  });
 });

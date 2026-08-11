@@ -1348,6 +1348,58 @@ fn inline_form_responses_mut<'a>(
         .ok_or_else(|| "Form responses must be an array".to_string())
 }
 
+fn is_valid_stored_form_response(value: &serde_json::Value) -> bool {
+    value
+        .get("submittedBy")
+        .and_then(|submitted_by| submitted_by.as_str())
+        .is_some_and(|submitted_by| !submitted_by.is_empty())
+        && value
+            .get("submittedAt")
+            .and_then(|submitted_at| submitted_at.as_str())
+            .is_some_and(|submitted_at| !submitted_at.is_empty())
+        && value.get("values").is_some_and(|values| values.is_object())
+}
+
+fn split_form_responses_exist(metadata: &serde_json::Value, form_id: &str) -> bool {
+    metadata
+        .get("beadFormResponses")
+        .and_then(|root| root.get("responsesByFormId"))
+        .and_then(|by_form| by_form.get(form_id))
+        .is_some()
+}
+
+fn seed_split_form_responses_from_inline(
+    metadata: &mut serde_json::Value,
+    form_id: &str,
+) -> Result<(), String> {
+    if split_form_responses_exist(metadata, form_id) {
+        return Ok(());
+    }
+
+    let inline_responses = {
+        let forms = forms_array_mut(metadata, form_id)?;
+        let form = forms
+            .iter_mut()
+            .find(|candidate| candidate.get("id").and_then(|id| id.as_str()) == Some(form_id))
+            .ok_or_else(|| format!("Form not found: {}", form_id))?;
+        let form_obj = form
+            .as_object_mut()
+            .ok_or_else(|| "Form metadata must be an object".to_string())?;
+        match form_obj.remove("responses") {
+            Some(serde_json::Value::Array(responses)) => responses
+                .into_iter()
+                .filter(is_valid_stored_form_response)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        }
+    };
+
+    if !inline_responses.is_empty() {
+        split_form_responses_mut(metadata, form_id)?.extend(inline_responses);
+    }
+    Ok(())
+}
+
 fn forms_array_mut<'a>(
     metadata: &'a mut serde_json::Value,
     form_id: &str,
@@ -1405,6 +1457,7 @@ fn append_form_response(
     webhook_markdown: Option<&str>,
 ) -> Result<(), String> {
     find_form(metadata, form_id)?;
+    seed_split_form_responses_from_inline(metadata, form_id)?;
     split_form_responses_mut(metadata, form_id)?.push(make_form_response(
         values,
         submitted_at,
@@ -1779,14 +1832,11 @@ pub async fn submit_bead_form_handler(
             if let Err(e) =
                 ensure_metadata_json_under_limit(&metadata, DEFAULT_BEAD_METADATA_JSON_MAX_BYTES)
             {
-                tracing::warn!("{}", e);
-                return (
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    Json(serde_json::json!({ "error": e })),
-                )
-                    .into_response();
-            }
-            if let Err((_, e)) =
+                tracing::warn!(
+                    "Skipping BeadsForm webhook markdown persistence after saved response: {}",
+                    e
+                );
+            } else if let Err((_, e)) =
                 persist_bead_metadata(&dolt_manager, &req.path, &req.id, &metadata).await
             {
                 tracing::warn!("Failed to persist webhook markdown: {}", e);
@@ -2461,6 +2511,46 @@ mod tests {
         assert_eq!(
             metadata["beadFormResponses"]["responsesByFormId"]["review"][0]["values"],
             serde_json::json!({ "comment": "new" })
+        );
+    }
+
+    #[test]
+    fn test_append_form_response_seeds_split_storage_from_legacy_inline_responses() {
+        let mut metadata = current_form_metadata();
+        metadata["beadForms"]["forms"][0]["responses"] = serde_json::json!([
+            {
+                "submittedBy": "user",
+                "submittedAt": "old",
+                "values": { "comment": "old" }
+            }
+        ]);
+        let mut values = serde_json::Map::new();
+        values.insert("comment".to_string(), serde_json::json!("new"));
+
+        append_form_response(
+            &mut metadata,
+            "review",
+            values,
+            "2026-06-07T00:00:00Z",
+            None,
+        )
+        .unwrap();
+
+        assert!(metadata["beadForms"]["forms"][0]["responses"].is_null());
+        assert_eq!(
+            metadata["beadFormResponses"]["responsesByFormId"]["review"],
+            serde_json::json!([
+                {
+                    "submittedBy": "user",
+                    "submittedAt": "old",
+                    "values": { "comment": "old" }
+                },
+                {
+                    "submittedBy": "user",
+                    "submittedAt": "2026-06-07T00:00:00Z",
+                    "values": { "comment": "new" }
+                }
+            ])
         );
     }
 

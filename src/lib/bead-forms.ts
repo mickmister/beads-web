@@ -525,7 +525,12 @@ export function mergeFormResponse(
   const beadFormResponses = next.beadFormResponses as JsonObject;
   if (!isObject(beadFormResponses.responsesByFormId)) beadFormResponses.responsesByFormId = {};
   const responsesByFormId = beadFormResponses.responsesByFormId as JsonObject;
-  if (!Array.isArray(responsesByFormId[formId])) responsesByFormId[formId] = [];
+  if (!Array.isArray(responsesByFormId[formId])) {
+    responsesByFormId[formId] = Array.isArray(form.responses)
+      ? form.responses.filter((candidate) => BeadFormResponseSchema.safeParse(candidate).success)
+      : [];
+  }
+  delete form.responses;
   const responses = responsesByFormId[formId] as unknown[];
   const response: BeadFormResponse = { submittedBy, submittedAt, values };
   if (webhookMarkdown) response.webhookMarkdown = webhookMarkdown;
