@@ -1,0 +1,376 @@
+{
+  "id": "next_beadsform_branch_milestones_choices",
+  "format": "standard",
+  "version": 2,
+  "title": "Decide next BeadsForm branch milestones (multiple choice)",
+  "goal": "Choose the next milestone order and settle key product constraints before agents continue implementation.",
+  "description": "Recent wins are now complete or approved: preview dependency bootstrap, authoring/refinement commands, file-plus-pipe BeadsForm authoring, and `vibe-agent send --stdin`. The branch is dogfoodable again and the remaining open work is mostly product sequencing.\n\nThis revised form uses multiple-choice questions only. Add nuance in the per-choice notes textareas when needed.",
+  "allowCodeFileChanges": {
+    "allowLabel": "Submit and allow agents to implement the chosen next milestone",
+    "avoidLabel": "Submit planning only; do not change files yet",
+    "description": "Choose whether agents may continue implementing after processing this response. Weekly-dev merge, branch deletion, and workspace closure are still not authorized by this form."
+  },
+  "questions": [
+    {
+      "id": "next_milestone_priority",
+      "title": "What should be the next implementation milestone?",
+      "description": "Select the milestone agents should do next. You can select multiple if you want a combined slice, but each selected item should still pass review2 and independent tester before moving to the next milestone.",
+      "choices": [
+        {
+          "id": "server_drafts_first",
+          "label": "M1: Server-side draft persistence first",
+          "description": "Start with beads-web-q4ep — Persist BeadsForm progress on the server.",
+          "is_recommended_reason": "Highest protection against user data loss and foundational for cross-device/cross-browser form progress.",
+          "prosAndCons": {
+            "pros": [
+              "Addresses the biggest data-loss gap.",
+              "Unblocks cleaner future handling for Next Instruction and in-progress wizard state.",
+              "Makes BeadsForms safer for long forms and mobile sessions."
+            ],
+            "cons": [
+              "Highest implementation risk: storage, scope, conflict handling, localStorage reconciliation, and submit cleanup."
+            ]
+          }
+        },
+        {
+          "id": "pending_queue_first",
+          "label": "M1: Pending queue usability first",
+          "description": "Batch beads-web-xq5 — Sort/filter pending BeadsForms queue and beads-web-nwj — Show branch and VK workspace context on pending BeadsForms.",
+          "prosAndCons": {
+            "pros": [
+              "Lower-risk display/index work.",
+              "Improves discovery and triage quickly.",
+              "Should not touch submit or draft persistence paths."
+            ],
+            "cons": [
+              "Does not address draft loss or submit-state concerns."
+            ]
+          }
+        },
+        {
+          "id": "wizard_mobile_first",
+          "label": "M1: Wizard/mobile navigation first",
+          "description": "Do beads-web-vx9 — Improve BeadsForm wizard keyboard and mobile navigation before storage/submit changes.",
+          "prosAndCons": {
+            "pros": [
+              "Focused UX/accessibility slice.",
+              "Good mobile/manual validation target.",
+              "Less storage risk than q4ep."
+            ],
+            "cons": [
+              "Does not solve draft persistence or pending queue discoverability."
+            ]
+          }
+        },
+        {
+          "id": "submit_handoff_first",
+          "label": "M1: Submit/handoff UX first",
+          "description": "Do beads-web-czy — Improve BeadsForm optimistic submit UI and/or beads-web-6xff — Add BeadsForm Next Instruction prompt.",
+          "prosAndCons": {
+            "pros": [
+              "Improves final moment of form filling and post-submit handoff.",
+              "Directly addresses recent optimistic-submit expectations."
+            ],
+            "cons": [
+              "Touches submit semantics, XML, clipboard, notification, aggregate, and failure states."
+            ]
+          }
+        },
+        {
+          "id": "clarification_chain_first",
+          "label": "M1: Structured clarification-agent chain first",
+          "description": "Continue yhk2/n11w/pyi2/x0po/fqb/loiz/lix before more BeadsForm UX work.",
+          "prosAndCons": {
+            "pros": [
+              "Could unlock in-place question clarification.",
+              "Builds on recent form-authoring/refinement workflow."
+            ],
+            "cons": [
+              "Security/transport-sensitive and should remain serial with strict review; likely slower than product UI wins."
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "server_draft_policy",
+      "title": "If server-side drafts are next, what policy should they use?",
+      "description": "This applies to `beads-web-q4ep — Persist BeadsForm progress on the server`. Choose the intended draft source-of-truth and cleanup behavior.",
+      "choices": [
+        {
+          "id": "server_authoritative",
+          "label": "Server draft is authoritative when available",
+          "description": "On load, newest valid server draft wins over localStorage unless the user explicitly chooses otherwise.",
+          "is_recommended_reason": "Matches the current bead goal: server draft should be authoritative and localStorage should be cache/fallback."
+        },
+        {
+          "id": "server_backup_only",
+          "label": "Server draft is backup only",
+          "description": "Keep localStorage primary and use server draft only when local draft is absent."
+        },
+        {
+          "id": "ask_on_conflict",
+          "label": "Ask the user on local/server conflict",
+          "description": "If both local and server drafts exist and differ, show a restore choice instead of auto-picking."
+        },
+        {
+          "id": "newest_wins",
+          "label": "Newest updatedAt wins automatically",
+          "description": "Use revision/updatedAt conflict checks and pick the newest valid draft without prompting."
+        },
+        {
+          "id": "archive_on_submit",
+          "label": "Archive draft on successful submit",
+          "description": "Keep a non-active archived copy for recovery/debug after submitted response is saved."
+        },
+        {
+          "id": "delete_on_submit",
+          "label": "Delete/clear draft on successful submit",
+          "description": "Remove the active draft after successful submission to prevent stale restore."
+        }
+      ]
+    },
+    {
+      "id": "draft_scope_policy",
+      "title": "How should server drafts be scoped for privacy and collaboration?",
+      "description": "Choose the intended privacy/collaboration model. The key must prevent leaks across users, repos, forms, and workspaces.",
+      "choices": [
+        {
+          "id": "workspace_user_session",
+          "label": "Scope by workspace/repo/bead/form plus current user or session",
+          "description": "Each user/session has their own draft for a form.",
+          "is_recommended_reason": "Safest default for privacy and prevents agents/humans from overwriting one another."
+        },
+        {
+          "id": "shared_per_bead_form",
+          "label": "One shared draft per bead/form",
+          "description": "Anyone with access to the form sees/continues the same in-progress draft."
+        },
+        {
+          "id": "creator_session_scoped",
+          "label": "Scope by creating session when available",
+          "description": "Tie drafts to the agent/session that created or opened the form."
+        },
+        {
+          "id": "needs_design_first",
+          "label": "Pause q4ep for a short design pass first",
+          "description": "Do not implement server drafts until identity/scope/storage location is designed."
+        }
+      ]
+    },
+    {
+      "id": "optimistic_submit_policy",
+      "title": "What should optimistic submit say before durable persistence?",
+      "description": "For `beads-web-czy — Improve BeadsForm optimistic submit UI`, current behavior waits for backend persistence before showing success and starting XML clipboard copy. Choose the preferred correctness/UX boundary.",
+      "choices": [
+        {
+          "id": "saving_not_submitted_until_durable",
+          "label": "Show “Saving…” until persistence, then “Submitted”",
+          "description": "Optimistically lock answers and start clipboard copy, but avoid saying saved/submitted until persistence succeeds.",
+          "is_recommended_reason": "Balances immediate feedback with correctness about durable save."
+        },
+        {
+          "id": "submitted_immediately_with_rollback",
+          "label": "Show “Submitted” immediately with rollback on failure",
+          "description": "Treat submit as optimistically successful and change only if persistence fails."
+        },
+        {
+          "id": "copy_immediately_even_before_persist",
+          "label": "Copy XML immediately before persistence completes",
+          "description": "Build XML from normalized local values and copy right away, then update warnings/status based on persistence result."
+        },
+        {
+          "id": "copy_only_after_persist",
+          "label": "Copy only after persistence succeeds",
+          "description": "Keep current correctness boundary for clipboard copy."
+        }
+      ]
+    },
+    {
+      "id": "next_instruction_policy",
+      "title": "How should “Next Instruction” be stored and handed off?",
+      "description": "This applies to `beads-web-6xff — Add BeadsForm \"Next Instruction\" prompt`. The field should appear near final/review submit buttons and tell the agent what to do after processing the form response.",
+      "choices": [
+        {
+          "id": "structured_response_field",
+          "label": "Store as a structured submitted response field",
+          "description": "Persist next_instruction as part of normalized response values and include it in XML/clipboard/notification.",
+          "is_recommended_reason": "Most reliable for downstream processing and replay."
+        },
+        {
+          "id": "handoff_only",
+          "label": "Include in handoff/notification only",
+          "description": "Do not store it as an answer field; use it only to guide immediate post-submit processing."
+        },
+        {
+          "id": "omit_when_empty",
+          "label": "Omit when empty",
+          "description": "No empty XML node or notification text if the user leaves it blank."
+        },
+        {
+          "id": "show_only_final_review",
+          "label": "Show only on final question and review step",
+          "description": "Keep it out of earlier questions to reduce distraction."
+        },
+        {
+          "id": "respect_no_code_changes",
+          "label": "Explicitly constrain by allow_code_file_changes",
+          "description": "If code/file changes are disallowed, the next instruction may guide discussion/planning only."
+        }
+      ]
+    },
+    {
+      "id": "pending_queue_policy",
+      "title": "If pending queue polish is next, what should it prioritize?",
+      "description": "This applies to `beads-web-xq5 — Sort/filter pending BeadsForms queue` and `beads-web-nwj — Show branch and VK workspace context on pending BeadsForms`.",
+      "choices": [
+        {
+          "id": "sort_updated_first",
+          "label": "Default sort by most recently updated/pending first",
+          "description": "Prioritize forms with recent activity."
+        },
+        {
+          "id": "group_by_workspace_branch",
+          "label": "Group by readable workspace/branch context",
+          "description": "Make it easier to distinguish similar forms across branches."
+        },
+        {
+          "id": "filter_by_repo_workspace",
+          "label": "Add repo/workspace filters",
+          "description": "Let users narrow the pending queue."
+        },
+        {
+          "id": "avoid_bulk_scans",
+          "label": "Hard gate: no broad scans or bulk bd show",
+          "description": "Any implementation must preserve existing pending queue scan/cache guarantees.",
+          "is_recommended_reason": "This was repeatedly important in prior review."
+        },
+        {
+          "id": "defer_pending_queue",
+          "label": "Defer pending queue polish",
+          "description": "Do draft/submit/wizard work first."
+        }
+      ]
+    },
+    {
+      "id": "embedding_policy",
+      "title": "Which embedding/documentation work should happen soon?",
+      "description": "Recent discussion clarified that Markdown/media refs should be repo/cwd-relative or explicit staging-root based, not .beads/attachments-first. Select the embedding follow-ups that should be prioritized.",
+      "choices": [
+        {
+          "id": "repo_relative_markdown_media",
+          "label": "Support repo-relative Markdown/media/file refs",
+          "description": "Prioritize beads-web-btnf — Allow repo-relative Markdown file attachments in BeadsForms."
+        },
+        {
+          "id": "embedding_docs_cli",
+          "label": "Document all embedding features in skill and CLI",
+          "description": "Prioritize beads-web-rsyb — Document all BeadsForm embedding features in skill and CLI."
+        },
+        {
+          "id": "no_beads_attachments_guidance",
+          "label": "Remove .beads/attachments-first guidance",
+          "description": "Assume new authoring should never require .beads/attachments."
+        },
+        {
+          "id": "temporary_staging_supported",
+          "label": "Support explicit temporary/staging folders",
+          "description": "Allow refs to files in an explicit staging root when needed, without hardcoded /tmp guidance."
+        }
+      ]
+    },
+    {
+      "id": "batching_policy",
+      "title": "How should the next work be batched?",
+      "description": "Choose how aggressively agents should combine upcoming beads. Smaller slices reduce review risk; batching related UI surfaces can reduce duplicate testing.",
+      "choices": [
+        {
+          "id": "q4ep_alone",
+          "label": "Do server drafts alone",
+          "description": "Keep beads-web-q4ep isolated because it is stateful and risky.",
+          "is_recommended_reason": "Tester strongly recommended q4ep as a separate milestone."
+        },
+        {
+          "id": "czy_6xff_together",
+          "label": "Batch optimistic submit + Next Instruction",
+          "description": "Combine beads-web-czy and beads-web-6xff because they touch the same submit/handoff surfaces."
+        },
+        {
+          "id": "xq5_nwj_together",
+          "label": "Batch pending queue sort/filter + context",
+          "description": "Combine beads-web-xq5 and beads-web-nwj as pending-list display work."
+        },
+        {
+          "id": "btnf_rsyb_together",
+          "label": "Batch embedding behavior + docs",
+          "description": "Combine beads-web-btnf and beads-web-rsyb if implementation and docs are naturally coupled."
+        },
+        {
+          "id": "vx9_alone",
+          "label": "Do wizard/mobile navigation alone",
+          "description": "Keep keyboard/mobile behavior isolated for easier accessibility testing."
+        },
+        {
+          "id": "hb7_last",
+          "label": "Defer plugin refactor until behavior stabilizes",
+          "description": "Keep beads-web-hb7 as a later refactor-only milestone."
+        },
+        {
+          "id": "clarification_serial",
+          "label": "Keep clarification-agent chain serial",
+          "description": "Do yhk2/n11w/pyi2/x0po/fqb/loiz/lix in strict order with separate review/test gates."
+        }
+      ]
+    },
+    {
+      "id": "permissions_and_constraints",
+      "title": "What permissions and constraints apply after this form?",
+      "description": "Confirm what agents may do after processing this response. This form does not authorize weekly-dev merge, branch deletion, or workspace closure unless explicitly stated here.",
+      "choices": [
+        {
+          "id": "continue_autonomously",
+          "label": "Continue autonomously through selected milestones",
+          "description": "Proceed serially with implementer, review2, and tester cycles for each selected milestone."
+        },
+        {
+          "id": "ask_between_milestones",
+          "label": "Ask me between milestones",
+          "description": "Stop after each milestone is tester-approved before starting the next."
+        },
+        {
+          "id": "implementation_allowed",
+          "label": "Implementation/code changes are allowed",
+          "description": "Agents may edit code/docs/tests for selected tasks."
+        },
+        {
+          "id": "planning_only",
+          "label": "Planning only for now",
+          "description": "Do not implement after this response; summarize and wait."
+        },
+        {
+          "id": "no_weekly_dev_merge",
+          "label": "No weekly-dev merge authorization",
+          "description": "Do not merge to weekly-dev based on this response alone.",
+          "assumedTrue": true
+        }
+      ]
+    },
+    {
+      "id": "additional_notes_choice",
+      "title": "Do you have additional planning notes?",
+      "description": "Use the per-choice notes textarea to add any sequencing, UX, storage, or risk constraints not captured above.",
+      "choices": [
+        {
+          "id": "has_additional_notes",
+          "label": "Yes, I have additional notes",
+          "description": "Add them in this choice’s notes textarea."
+        },
+        {
+          "id": "no_additional_notes",
+          "label": "No additional notes",
+          "description": "The multiple-choice selections are enough."
+        }
+      ]
+    }
+  ]
+}
