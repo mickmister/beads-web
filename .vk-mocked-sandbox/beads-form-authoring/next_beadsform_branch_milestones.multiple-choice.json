@@ -13,6 +13,7 @@
   "questions": [
     {
       "id": "next_milestone_priority",
+      "type": "choices",
       "title": "What should be the next implementation milestone?",
       "description": "Select the milestone agents should do next. You can select multiple if you want a combined slice, but each selected item should still pass review2 and independent tester before moving to the next milestone.",
       "choices": [
@@ -94,6 +95,7 @@
     },
     {
       "id": "server_draft_policy",
+      "type": "choices",
       "title": "If server-side drafts are next, what policy should they use?",
       "description": "This applies to `beads-web-q4ep — Persist BeadsForm progress on the server`. Choose the intended draft source-of-truth and cleanup behavior.",
       "choices": [
@@ -132,6 +134,7 @@
     },
     {
       "id": "draft_scope_policy",
+      "type": "choices",
       "title": "How should server drafts be scoped for privacy and collaboration?",
       "description": "Choose the intended privacy/collaboration model. The key must prevent leaks across users, repos, forms, and workspaces.",
       "choices": [
@@ -160,6 +163,7 @@
     },
     {
       "id": "optimistic_submit_policy",
+      "type": "choices",
       "title": "What should optimistic submit say before durable persistence?",
       "description": "For `beads-web-czy — Improve BeadsForm optimistic submit UI`, current behavior waits for backend persistence before showing success and starting XML clipboard copy. Choose the preferred correctness/UX boundary.",
       "choices": [
@@ -188,6 +192,7 @@
     },
     {
       "id": "next_instruction_policy",
+      "type": "choices",
       "title": "How should “Next Instruction” be stored and handed off?",
       "description": "This applies to `beads-web-6xff — Add BeadsForm \"Next Instruction\" prompt`. The field should appear near final/review submit buttons and tell the agent what to do after processing the form response.",
       "choices": [
@@ -221,6 +226,7 @@
     },
     {
       "id": "pending_queue_policy",
+      "type": "choices",
       "title": "If pending queue polish is next, what should it prioritize?",
       "description": "This applies to `beads-web-xq5 — Sort/filter pending BeadsForms queue` and `beads-web-nwj — Show branch and VK workspace context on pending BeadsForms`.",
       "choices": [
@@ -254,6 +260,7 @@
     },
     {
       "id": "embedding_policy",
+      "type": "choices",
       "title": "Which embedding/documentation work should happen soon?",
       "description": "Recent discussion clarified that Markdown/media refs should be repo/cwd-relative or explicit staging-root based, not .beads/attachments-first. Select the embedding follow-ups that should be prioritized.",
       "choices": [
@@ -281,6 +288,7 @@
     },
     {
       "id": "batching_policy",
+      "type": "choices",
       "title": "How should the next work be batched?",
       "description": "Choose how aggressively agents should combine upcoming beads. Smaller slices reduce review risk; batching related UI surfaces can reduce duplicate testing.",
       "choices": [
@@ -324,6 +332,7 @@
     },
     {
       "id": "permissions_and_constraints",
+      "type": "choices",
       "title": "What permissions and constraints apply after this form?",
       "description": "Confirm what agents may do after processing this response. This form does not authorize weekly-dev merge, branch deletion, or workspace closure unless explicitly stated here.",
       "choices": [
@@ -357,6 +366,7 @@
     },
     {
       "id": "additional_notes_choice",
+      "type": "choices",
       "title": "Do you have additional planning notes?",
       "description": "Use the per-choice notes textarea to add any sequencing, UX, storage, or risk constraints not captured above.",
       "choices": [
